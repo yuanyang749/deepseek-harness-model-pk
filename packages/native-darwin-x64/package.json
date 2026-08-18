@@ -1,0 +1,11 @@
+{
+  "name": "@model-pk/native-darwin-x64",
+  "version": "0.1.0",
+  "description": "Model PK native helper for macOS x64",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "files": ["bin", "manifest.json"],
+  "type": "module"
+}
+

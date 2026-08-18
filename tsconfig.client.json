@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": false,
+    "outDir": "lib/types/client",
+    "rootDir": "src",
+    "types": ["react", "react-dom"]
+  },
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "src/contracts/**/*.ts"]
+}

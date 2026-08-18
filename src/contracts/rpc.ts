@@ -1,0 +1,29 @@
+export const RPC_ENDPOINTS = Object.freeze({
+  capabilitiesGet: 'v1/capabilities/get',
+  modelsList: 'v1/models/list',
+  draftGet: 'v1/draft/get',
+  experimentGet: 'v1/experiment/get',
+  experimentPoll: 'v1/experiment/poll',
+  storageListForDeletion: 'v1/storage/list-for-deletion',
+  draftCreate: 'v1/draft/create',
+  draftUpdate: 'v1/draft/update',
+  attachmentBegin: 'v1/draft/attachment/begin',
+  attachmentChunk: 'v1/draft/attachment/chunk',
+  attachmentCommit: 'v1/draft/attachment/commit',
+  attachmentRemove: 'v1/draft/attachment/remove',
+  baselineSelect: 'v1/draft/baseline/select',
+  baselineClear: 'v1/draft/baseline/clear',
+  preflightRun: 'v1/preflight/run',
+  preflightConfirm: 'v1/preflight/confirm-warning',
+  experimentStart: 'v1/experiment/start',
+  attemptStop: 'v1/attempt/stop',
+  experimentStopAll: 'v1/experiment/stop-all',
+  runRetry: 'v1/run/retry',
+  runAgain: 'v1/run/run-again',
+  experimentRetryFailed: 'v1/experiment/retry-failed',
+  experimentOpenFolder: 'v1/experiment/open-folder',
+  experimentDelete: 'v1/experiment/delete',
+} as const)
+
+export type RpcEndpoint = typeof RPC_ENDPOINTS[keyof typeof RPC_ENDPOINTS]
+

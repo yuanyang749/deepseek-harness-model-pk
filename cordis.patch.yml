@@ -1,0 +1,11 @@
+# Model PK is an additive DSH plugin. It does not replace the conversation UI.
+- id: agent-loop
+  config:
+    agents: []
+    maxParallelToolCalls: 1
+
+- insert:
+    - id: model-pk
+      name: dsh-model-pk
+      config:
+        dshCommit: 99f6f02fecdb7dff40c3fbc9470f5907c29f74ca
