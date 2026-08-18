@@ -1,6 +1,5 @@
-import type { ComponentType } from 'react'
 import { ModelPkApi } from './api.js'
-import { ModelPkOverlay, SidebarAction } from './App.js'
+import { ModelPkOverlay, ModelPkSettingsSection } from './App.js'
 import type { ModelPkClientContext } from './context.js'
 import { ModelPkUiController } from './controller.js'
 
@@ -9,13 +8,14 @@ export const inject = ['slots', 'connection']
 
 export function apply(ctx: ModelPkClientContext): void {
   const controller = new ModelPkUiController(new ModelPkApi(ctx))
-  const Action = ((props: Record<string, unknown>) => <SidebarAction controller={controller} wide={props.wide === true} />) as ComponentType<Record<string, unknown>>
-  const Overlay = (() => <ModelPkOverlay controller={controller} />) as ComponentType<Record<string, unknown>>
-  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
-    name: 'sidebar.footer.action',
+  const Section = (): JSX.Element => <ModelPkSettingsSection controller={controller} />
+  const Overlay = (): JSX.Element => <ModelPkOverlay controller={controller} />
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
     id: 'model-pk',
-    order: 50,
-  }, Action))
+    order: 70,
+    label: 'Model PK',
+  }, Section))
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',
     id: 'model-pk',

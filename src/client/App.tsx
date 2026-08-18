@@ -1,22 +1,28 @@
-import { useMemo, useState, useSyncExternalStore, type ChangeEvent, type DragEvent } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type ChangeEvent, type DragEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type { Attempt, DraftUpdateRequest, ExperimentProjection, ModelListItem, PreflightSnapshot, Run } from '../contracts/types.js'
 import { LIMITS } from '../contracts/constants.js'
 import type { ModelPkUiController, UiScreen, UiSnapshot } from './controller.js'
 import { MODEL_PK_CSS } from './styles.js'
 
-export function SidebarAction({ controller, wide }: { controller: ModelPkUiController; wide: boolean }): JSX.Element {
+export function ModelPkSettingsSection({ controller }: { controller: ModelPkUiController }): JSX.Element {
+  useEffect(() => {
+    void controller.open()
+  }, [controller])
   return (
-    <button className="mpk-launch" type="button" onClick={() => { void controller.open() }} aria-label="打开 Model PK">
-      <span className="mpk-launch-mark" aria-hidden="true">PK</span>
-      {wide ? <span className="mpk-launch-label">Model PK</span> : null}
-    </button>
+    <section className="mpk-launch-card" aria-label="Model PK 入口">
+      <style>{MODEL_PK_CSS}</style>
+      <h2>Model PK</h2>
+      <p>对照实验在全屏界面中运行，避免挤进设置面板。关闭全屏后可再次打开。</p>
+      <button className="mpk-btn" type="button" onClick={() => { void controller.open() }}>打开全屏</button>
+    </section>
   )
 }
 
 export function ModelPkOverlay({ controller }: { controller: ModelPkUiController }): JSX.Element | null {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
-  if (!snapshot.open) return null
-  return (
+  if (!snapshot.open || typeof document === 'undefined') return null
+  return createPortal(
     <div className="mpk-shell" role="dialog" aria-modal="true" aria-label="Model PK">
       <style>{MODEL_PK_CSS}</style>
       <Header screen={snapshot.screen} onNavigate={screen => controller.show(screen)} onClose={() => controller.close()} hasExperiment={snapshot.experiment !== null} />
@@ -28,7 +34,8 @@ export function ModelPkOverlay({ controller }: { controller: ModelPkUiController
         {snapshot.screen === 'storage' ? <StoragePage snapshot={snapshot} controller={controller} /> : null}
       </main>
       {snapshot.busy ? <div className="mpk-busy" role="status" aria-live="polite">{snapshot.busyLabel}</div> : null}
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -122,18 +129,51 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
     const files = [...event.clipboardData.files]
     if (files.length > 0) { event.preventDefault(); void upload(files) }
   }
+  const ready = snapshot.capability?.executionEnabled ?? false
+  const blockers = snapshot.capability?.blockers ?? []
   return (
     <section className="mpk-page">
-      <div className="mpk-titlebar">
-        <div><div className="mpk-kicker">Experiment definition</div><h1>创建对照实验</h1><p>冻结一份 Task Package，让 2–10 个模型在相同 Harness 中独立执行。</p></div>
-        <div className="mpk-actions"><button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.newDraft() }}>新建草稿</button><button className="mpk-btn" type="button" disabled={snapshot.busy} onClick={() => { void preflight() }}>运行 Preflight</button></div>
-      </div>
+      <header className="mpk-titlebar">
+        <div className="mpk-titlebar-copy">
+          <h1>创建对照实验</h1>
+          <p>冻结一份任务包，让 2–10 个模型在相同执行环境中独立完成。</p>
+        </div>
+        <div className="mpk-titlebar-meta">
+          <div className="mpk-env" data-ready={ready}>
+            <span className="mpk-env-dot" aria-hidden="true" />
+            <span className="mpk-env-label">{ready ? '执行环境就绪' : '执行入口已阻断'}</span>
+            <span className="mpk-env-detail">DSH {snapshot.capability?.expectedDshVersion ?? '—'} · {snapshot.capability?.hostPlatform ?? '—'}/{snapshot.capability?.hostArch ?? '—'}</span>
+          </div>
+          <div className="mpk-actions">
+            <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.newDraft() }}>新建草稿</button>
+            <button className="mpk-btn" type="button" disabled={snapshot.busy} onClick={() => { void preflight() }}>运行预检</button>
+          </div>
+        </div>
+      </header>
+      {blockers.length > 0 ? (
+        <details className="mpk-env-blockers">
+          <summary>{blockers.length} 个阻断项</summary>
+          <ul>{blockers.map(blocker => <li key={`${blocker.code}:${blocker.phase}`}>{blocker.code}: {blocker.userMessage}</li>)}</ul>
+        </details>
+      ) : null}
       <div className="mpk-grid">
         <div className="mpk-stack">
           <div className="mpk-card mpk-stack">
-            <label className="mpk-field"><span>Task Name *</span><input className="mpk-input" maxLength={120} value={form.taskName} onChange={event => setField('taskName', event.target.value)} /><small className="mpk-meta">{[...form.taskName].length} / 120 字符</small></label>
-            <label className="mpk-field"><span>Task Type</span><input className="mpk-input" maxLength={64} placeholder="可选自由标签，不改变 Harness" value={form.taskType} onChange={event => setField('taskType', event.target.value)} /></label>
-            <label className="mpk-field"><span>Prompt *</span><textarea className="mpk-textarea" value={form.prompt} onChange={event => setField('prompt', event.target.value)} /><small className="mpk-meta">{formatBytes(new TextEncoder().encode(form.prompt).byteLength)} / 1 MiB · 空格与换行按原始 UTF-8 保留</small></label>
+            <label className="mpk-field">
+              <span>任务名称 *</span>
+              <input className="mpk-input" maxLength={120} value={form.taskName} onChange={event => setField('taskName', event.target.value)} />
+              <small className="mpk-meta">用于实验列表与归档目录命名。最多 120 个字符，当前 {[...form.taskName].length} / 120。</small>
+            </label>
+            <label className="mpk-field">
+              <span>任务类型</span>
+              <input className="mpk-input" maxLength={64} placeholder="例如：代码审查、文档改写" value={form.taskType} onChange={event => setField('taskType', event.target.value)} />
+              <small className="mpk-meta">可选分类标签，不会改变系统提示词、工具权限或执行策略。</small>
+            </label>
+            <label className="mpk-field">
+              <span>提示词 *</span>
+              <textarea className="mpk-textarea" value={form.prompt} onChange={event => setField('prompt', event.target.value)} />
+              <small className="mpk-meta">所有参赛模型收到同一份原文；空格与换行按原始 UTF-8 保留。当前 {formatBytes(new TextEncoder().encode(form.prompt).byteLength)} / 1 MiB。</small>
+            </label>
           </div>
           <div className="mpk-card mpk-stack">
             <div><h2 className="mpk-section-title">图片输入</h2><div className="mpk-meta">PNG / JPEG / WebP · 最多 10 张 · 保留用户顺序和原始字节</div></div>
@@ -143,25 +183,26 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
             <AttachmentList draft={draft} controller={controller} />
           </div>
           <div className="mpk-card mpk-stack">
-            <div><h2 className="mpk-section-title">Workspace Baseline</h2><div className="mpk-meta">默认空；选择目录后完整冻结，不应用 .gitignore。</div></div>
-            {draft.baseline === null ? <div className="mpk-actions"><input className="mpk-input" aria-label="Baseline 本地目录" placeholder="/absolute/path/to/workspace" value={baselinePath} onChange={event => setBaselinePath(event.target.value)} /><button className="mpk-btn mpk-btn-secondary" disabled={baselinePath.trim() === ''} type="button" onClick={async () => { if (await persist()) await controller.selectBaseline(baselinePath) }}>扫描并冻结</button></div> : (
-              <div className="mpk-stack"><div><strong>{draft.baseline.fileCount.toLocaleString()} files · {formatBytes(draft.baseline.byteLength)}</strong><div className="mpk-hash">{draft.baseline.objectHash}</div><div className="mpk-path">{draft.baseline.sourcePath}</div></div><div><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.clearBaseline() }}>清除 Baseline</button></div></div>
+            <div><h2 className="mpk-section-title">工作区基线</h2><div className="mpk-meta">默认为空。填写本地目录后会完整冻结快照，不应用 .gitignore。</div></div>
+            {draft.baseline === null ? <div className="mpk-actions"><input className="mpk-input" aria-label="工作区基线本地目录" placeholder="例如：/Users/you/project" value={baselinePath} onChange={event => setBaselinePath(event.target.value)} /><button className="mpk-btn mpk-btn-secondary" disabled={baselinePath.trim() === ''} type="button" onClick={async () => { if (await persist()) await controller.selectBaseline(baselinePath) }}>扫描并冻结</button></div> : (
+              <div className="mpk-stack"><div><strong>{draft.baseline.fileCount.toLocaleString()} 个文件 · {formatBytes(draft.baseline.byteLength)}</strong><div className="mpk-hash">{draft.baseline.objectHash}</div><div className="mpk-path">{draft.baseline.sourcePath}</div></div><div><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.clearBaseline() }}>清除基线</button></div></div>
             )}
           </div>
         </div>
         <aside className="mpk-stack">
-          <div className="mpk-card mpk-capability" data-ready={snapshot.capability?.executionEnabled ?? false}>
-            <div className="mpk-kicker">Compatibility gate</div><strong>{snapshot.capability?.executionEnabled ? '执行环境 READY' : '执行入口 BLOCKED'}</strong>
-            <p className="mpk-meta">DSH {snapshot.capability?.expectedDshVersion ?? '—'} · {snapshot.capability?.hostPlatform ?? '—'}/{snapshot.capability?.hostArch ?? '—'}</p>
-            {(snapshot.capability?.blockers.length ?? 0) > 0 ? <details className="mpk-diagnostics"><summary>{snapshot.capability!.blockers.length} 个阻断项</summary><ul>{snapshot.capability!.blockers.map(blocker => <li key={`${blocker.code}:${blocker.phase}`}>{blocker.code}: {blocker.userMessage}</li>)}</ul></details> : null}
-          </div>
-          <div className="mpk-card mpk-stack">
-            <div><h2 className="mpk-section-title">模型 <span className="mpk-pill">{form.selectedModelConfigIds.length} / 10</span></h2><input className="mpk-input" aria-label="搜索模型" placeholder="搜索模型或 Provider" value={search} onChange={event => setSearch(event.target.value)} /></div>
+          <div className="mpk-card mpk-models">
+            <div className="mpk-models-head">
+              <h2 className="mpk-section-title">模型 <span className="mpk-pill">{form.selectedModelConfigIds.length} / 10</span></h2>
+              <input className="mpk-input" aria-label="搜索模型" placeholder="搜索模型或提供商" value={search} onChange={event => setSearch(event.target.value)} />
+            </div>
             <div className="mpk-model-list">{filtered.map(model => <ModelOption key={model.modelConfigId} model={model} checked={form.selectedModelConfigIds.includes(model.modelConfigId)} onChange={() => toggleModel(model)} />)}</div>
           </div>
           <div className="mpk-card mpk-stack">
-            <label className="mpk-field"><span>Concurrency</span><select className="mpk-select" value={Math.min(form.concurrency, Math.max(1, form.selectedModelConfigIds.length))} onChange={event => setField('concurrency', Number(event.target.value))}>{Array.from({ length: Math.max(1, form.selectedModelConfigIds.length) }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-            <div className="mpk-meta">选择模型时默认 min(4, N)，之后可手动调整。QUEUED 不计入 30 分钟执行时限。</div>
+            <label className="mpk-field">
+              <span>并发数</span>
+              <select className="mpk-select" aria-label="并发数" value={Math.min(form.concurrency, Math.max(1, form.selectedModelConfigIds.length))} onChange={event => setField('concurrency', Number(event.target.value))}>{Array.from({ length: Math.max(1, form.selectedModelConfigIds.length) }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value}</option>)}</select>
+              <small className="mpk-meta">同时执行的模型路数。选模型后默认取 min(4, N)，之后可改；排队中的任务不计入 30 分钟时限。</small>
+            </label>
             <div className="mpk-divider" />
             <button className="mpk-btn" type="button" disabled={snapshot.busy || form.selectedModelConfigIds.length < 2} onClick={() => { void preflight() }}>保存并运行 Preflight</button>
           </div>
@@ -197,7 +238,7 @@ function PreflightPage({ snapshot, controller }: { snapshot: UiSnapshot; control
 }
 
 function PreflightSummary({ value }: { value: PreflightSnapshot }): JSX.Element {
-  return <div className="mpk-card mpk-stack"><div className="mpk-summary-grid"><Stat label="模型" value={String(value.models.length)} /><Stat label="图片" value={String(value.taskPackage.attachments.length)} /><Stat label="Baseline" value={value.taskPackage.baseline === null ? '空' : formatBytes(value.taskPackage.baseline.byteLength)} /><Stat label="Concurrency" value={String(value.executionConditions.concurrency)} /><Stat label="容量估算" value={formatBytes(value.capacityEstimateBytes)} /></div><details className="mpk-diagnostics"><summary>指纹、Adapter 与权限诊断</summary><pre className="mpk-mono">{JSON.stringify({ snapshotHash: value.snapshotHash, taskPackageHash: value.taskPackageHash, resolvedHarnessFingerprint: value.resolvedHarnessFingerprint, executionConditionsHash: value.executionConditionsHash, models: value.models.map(model => ({ model: model.modelName, adapter: `${model.adapterPackage}@${model.adapterVersion}`, protocol: model.protocol, contextWindow: model.contextWindow, outputTokenCapacity: model.outputTokenCapacity, maxOutputTokens: model.maxOutputTokens, revision: model.revision, serializers: model.serializerDependencies, fingerprint: model.fingerprint })), permissions: value.resolvedHarness.permissions }, null, 2)}</pre></details></div>
+  return <div className="mpk-card mpk-stack"><div className="mpk-summary-grid"><Stat label="模型" value={String(value.models.length)} /><Stat label="图片" value={String(value.taskPackage.attachments.length)} /><Stat label="工作区基线" value={value.taskPackage.baseline === null ? '空' : formatBytes(value.taskPackage.baseline.byteLength)} /><Stat label="并发数" value={String(value.executionConditions.concurrency)} /><Stat label="容量估算" value={formatBytes(value.capacityEstimateBytes)} /></div><details className="mpk-diagnostics"><summary>指纹、Adapter 与权限诊断</summary><pre className="mpk-mono">{JSON.stringify({ snapshotHash: value.snapshotHash, taskPackageHash: value.taskPackageHash, resolvedHarnessFingerprint: value.resolvedHarnessFingerprint, executionConditionsHash: value.executionConditionsHash, models: value.models.map(model => ({ model: model.modelName, adapter: `${model.adapterPackage}@${model.adapterVersion}`, protocol: model.protocol, contextWindow: model.contextWindow, outputTokenCapacity: model.outputTokenCapacity, maxOutputTokens: model.maxOutputTokens, revision: model.revision, serializers: model.serializerDependencies, fingerprint: model.fingerprint })), permissions: value.resolvedHarness.permissions }, null, 2)}</pre></details></div>
 }
 
 function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; controller: ModelPkUiController }): JSX.Element {

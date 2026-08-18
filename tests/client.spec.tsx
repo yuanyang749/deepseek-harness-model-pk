@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { RPC_ENDPOINTS } from '../src/contracts/rpc.js'
-import { ModelPkOverlay } from '../src/client/App.js'
+import { ModelPkOverlay, ModelPkSettingsSection } from '../src/client/App.js'
 import { ModelPkApi } from '../src/client/api.js'
 import { ModelPkUiController } from '../src/client/controller.js'
 import type { ModelPkClientContext } from '../src/client/context.js'
@@ -37,7 +37,7 @@ describe('formal product UI', () => {
     render(<ModelPkOverlay controller={controller} />)
     expect(screen.getByRole('dialog', { name: 'Model PK' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '创建对照实验' })).toBeInTheDocument()
-    expect(screen.getByText('执行环境 READY')).toBeInTheDocument()
+    expect(screen.getByText('执行环境就绪')).toBeInTheDocument()
   })
 
   it('defaults concurrency to min(4, N) when model selection changes', async () => {
@@ -60,7 +60,7 @@ describe('formal product UI', () => {
     render(<ModelPkOverlay controller={controller} />)
     fireEvent.click(screen.getByRole('checkbox', { name: /Model 1/u }))
     fireEvent.click(screen.getByRole('checkbox', { name: /Model 2/u }))
-    expect(screen.getByRole('combobox', { name: 'Concurrency' })).toHaveValue('2')
+    expect(screen.getByRole('combobox', { name: '并发数' })).toHaveValue('2')
   })
 
   it('cancels the live poll before deleting the currently viewed experiment', async () => {
@@ -93,5 +93,20 @@ describe('formal product UI', () => {
     expect(pollWasAborted).toBe(true)
     expect(controller.getSnapshot()).toMatchObject({ experiment: null, error: null, storage: [] })
     expect(localStorage.getItem('dsh-model-pk:last-experiment-id')).toBeNull()
+  })
+
+  it('opens the fullscreen overlay from the settings entry', async () => {
+    const controller = new ModelPkUiController(new ModelPkApi(context()))
+    render(
+      <>
+        <ModelPkSettingsSection controller={controller} />
+        <ModelPkOverlay controller={controller} />
+      </>,
+    )
+    expect(await screen.findByRole('dialog', { name: 'Model PK' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '关闭 Model PK' }))
+    expect(screen.queryByRole('dialog', { name: 'Model PK' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '打开全屏' }))
+    expect(screen.getByRole('dialog', { name: 'Model PK' })).toBeInTheDocument()
   })
 })

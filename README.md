@@ -4,7 +4,7 @@ Model PK 是 DSH `0.1.0-rc.7` 的本地多模型公平对照插件。它以一�
 
 ## V1 功能
 
-- 正式全屏 UI：创建、Preflight、Experiment 详情、Attempt 历史、双栏原始输出对照、本地存储管理。
+- 设置页 Model PK 入口打开全屏 UI：创建、Preflight、Experiment 详情、Attempt 历史、双栏原始输出对照、本地存储管理。
 - 单个 ACTIVE Experiment；实验内持久 FIFO 调度，默认并发 `min(4, N)`。
 - 文本、最多 10 张原始图片、最多 5 GiB / 200,000 文件的完整 Baseline 快照。
 - `Stop`、`Stop All`、`Retry`、`Run Again`、原子 `Retry Failed`。
@@ -48,7 +48,7 @@ pnpm exec dsh --profile web
 插件只增加：
 
 - Host RPC `/model-pk` 与 `/model-pk-native`，均为 loopback authority；
-- `sidebar.footer.action` 的 Model PK 入口；
+- `settings.section` 的 Model PK 入口；
 - `shell.overlay` 的全屏产品界面。
 
 它不会替换 DSH 的 conversation UI。

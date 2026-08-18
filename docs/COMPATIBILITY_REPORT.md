@@ -15,7 +15,7 @@
 | Probe | Evidence / behavior |
 |---|---|
 | DSH identity | Installed package version plus profile-supplied source commit must match exactly. |
-| Host/Client bundle | Independent Host ESM and browser CJS bundle; additive sidebar and overlay slots. |
+| Host/Client bundle | Independent Host ESM and browser CJS bundle; additive settings.section slot. |
 | RPC trust fence | `/model-pk` and `/model-pk-native` are separately registered with `authority: loopback`. |
 | Model identity | Versioned JCS `modelConfigId`, redacted Provider profile snapshot, Adapter/serializer versions, retry policy, revision, context window and independently resolved output-token capability. The pinned pi-ai catalog supplies exact built-in protocol/capability facts; custom routes use their redacted profile. |
 | Harness | Complete system prompt, six exact tools, Agent Loop/options, context policy, Seatbelt policy and versions enter one JCS fingerprint. |

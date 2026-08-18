@@ -180,7 +180,7 @@ export class ModelPkUiController {
   }
 
   async selectBaseline(sourcePath: string): Promise<void> {
-    await this.run('正在扫描并冻结 Baseline…', async () => {
+    await this.run('正在扫描并冻结工作区基线…', async () => {
       const draft = this.requiredDraft()
       const next = await this.api.business<Draft>(RPC_ENDPOINTS.baselineSelect, {
         draftId: draft.draftId,
@@ -192,7 +192,7 @@ export class ModelPkUiController {
   }
 
   async clearBaseline(): Promise<void> {
-    await this.run('正在清除 Baseline…', async () => {
+    await this.run('正在清除工作区基线…', async () => {
       const draft = this.requiredDraft()
       const next = await this.api.business<Draft>(RPC_ENDPOINTS.baselineClear, {
         draftId: draft.draftId,

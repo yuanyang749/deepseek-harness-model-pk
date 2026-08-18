@@ -13,7 +13,12 @@ export interface ModelPkClientContext {
   readonly slots: {
     inject(name: string, setup: () => (() => void) | void): () => void
     register(
-      options: { readonly name: string; readonly id?: string; readonly order?: number },
+      options: {
+        readonly name: string
+        readonly id?: string
+        readonly order?: number
+        readonly label?: string | (() => string)
+      },
       component: ComponentType<Record<string, unknown>>,
     ): () => void
   }
