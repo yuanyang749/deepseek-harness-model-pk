@@ -51,8 +51,13 @@ export class ModelPkUiController {
   private readonly listeners = new Set<() => void>()
   private pollAbort: AbortController | null = null
   private booted = false
+  private readonly previews = new Map<string, string>()
 
   constructor(private readonly api: ModelPkApi) {}
+
+  previewUrl(hash: string): string | null {
+    return this.previews.get(hash) ?? null
+  }
 
   readonly getSnapshot = (): UiSnapshot => this.value
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -106,9 +111,10 @@ export class ModelPkUiController {
   }
 
   async newDraft(): Promise<void> {
-    await this.run('正在创建草稿…', async () => {
+    await this.run('正在清空当前填写…', async () => {
       const draft = await this.api.business<Draft>(RPC_ENDPOINTS.draftCreate, {})
       localStorage.setItem(DRAFT_KEY, draft.draftId)
+      this.prunePreviews([])
       this.patch({ draft, preflight: null, screen: 'create' })
     })
   }
@@ -137,7 +143,10 @@ export class ModelPkUiController {
     await this.run('正在校验并上传图片…', async () => {
       for (const file of files) {
         const bytes = new Uint8Array(await file.arrayBuffer())
+        this.rememberPreview(file.name, file)
         const expectedHash = await sha256(bytes)
+        this.rememberPreview(expectedHash, file)
+        this.patch({})
         const draft = this.requiredDraft()
         const begin = await this.api.business<{ uploadId: string; chunkSize: number }>(RPC_ENDPOINTS.attachmentBegin, {
           draftId: draft.draftId,
@@ -156,6 +165,7 @@ export class ModelPkUiController {
           })
         }
         const next = await this.api.business<Draft>(RPC_ENDPOINTS.attachmentCommit, { uploadId: begin.uploadId })
+        this.prunePreviews(next.attachments.map(item => item.hash))
         this.patch({ draft: next, preflight: null })
       }
     })
@@ -169,6 +179,7 @@ export class ModelPkUiController {
         expectedRevision: draft.revision,
         attachmentId,
       })
+      this.prunePreviews(next.attachments.map(item => item.hash))
       this.patch({ draft: next, preflight: null })
     })
   }
@@ -180,7 +191,7 @@ export class ModelPkUiController {
   }
 
   async selectBaseline(sourcePath: string): Promise<void> {
-    await this.run('正在扫描并冻结工作区基线…', async () => {
+    await this.run('正在复制项目起始快照…', async () => {
       const draft = this.requiredDraft()
       const next = await this.api.business<Draft>(RPC_ENDPOINTS.baselineSelect, {
         draftId: draft.draftId,
@@ -192,7 +203,7 @@ export class ModelPkUiController {
   }
 
   async clearBaseline(): Promise<void> {
-    await this.run('正在清除工作区基线…', async () => {
+    await this.run('正在清除项目起始快照…', async () => {
       const draft = this.requiredDraft()
       const next = await this.api.business<Draft>(RPC_ENDPOINTS.baselineClear, {
         draftId: draft.draftId,
@@ -369,6 +380,21 @@ export class ModelPkUiController {
   private requiredExperiment(): ExperimentProjection {
     if (this.value.experiment === null) throw new Error('Experiment 尚未加载')
     return this.value.experiment
+  }
+
+  private rememberPreview(hash: string, file: File): void {
+    const previous = this.previews.get(hash)
+    if (previous !== undefined) URL.revokeObjectURL(previous)
+    this.previews.set(hash, URL.createObjectURL(file))
+  }
+
+  private prunePreviews(keep: readonly string[]): void {
+    const retained = new Set(keep)
+    for (const [hash, url] of this.previews) {
+      if (retained.has(hash)) continue
+      URL.revokeObjectURL(url)
+      this.previews.delete(hash)
+    }
   }
 
   private patch(patch: Partial<UiSnapshot>): void {

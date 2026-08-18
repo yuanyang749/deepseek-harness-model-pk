@@ -60,7 +60,7 @@ export class ModelCatalog {
         const protocol = this.resolveProtocol(route, model.id)
         const supported = adapter.kind === 'deepseek'
           || adapter.kind === 'pi-ai' && protocol !== undefined && SUPPORTED_PROTOCOLS.has(protocol)
-        const modalities = adapter.kind === 'deepseek' ? ['text'] as const : normalizeModalities(model.inputModalities)
+        const modalities = this.resolveModalities(adapter.kind, route, model.id, model.name, model.inputModalities).modalities
         const item: ModelListItem = {
           modelConfigId: modelConfigIdValue,
           providerRoute: provider.id,
@@ -133,7 +133,7 @@ export class ModelCatalog {
       adapterVersion: DSH_VERSION,
       protocol,
       revision: 'unresolved',
-      inputModalities: adapter.kind === 'deepseek' ? ['text'] as const : normalizeModalities(resolved.inputModalities),
+      inputModalities: this.resolveModalities(adapter.kind, route, item.modelId, resolved.name, resolved.inputModalities).modalities,
       contextWindow: resolved.context?.contextWindow ?? null,
       defaultMaxTokens: resolved.defaultMaxTokens ?? null,
       outputTokenCapacity,
@@ -160,6 +160,37 @@ export class ModelCatalog {
     if (!snapshot.inputModalities.includes('image')) return false
     return (this.evidence.imageLosslessProtocols ?? BUILTIN_IMAGE_LOSSLESS_PROTOCOLS)
       .includes(snapshot.protocol)
+  }
+
+  imageCapability(snapshot: ModelConfigSnapshot): ImageCapability {
+    const route = this.ctx.llm.listConfigurableProviders().find(candidate => candidate.provider === snapshot.providerRoute)
+    const adapter = adapterInfo(route, snapshot.providerRoute)
+    return this.resolveModalities(adapter.kind, route, snapshot.modelId, snapshot.modelName, snapshot.inputModalities)
+  }
+
+  private resolveModalities(
+    adapterKind: 'deepseek' | 'pi-ai' | 'unknown',
+    route: DshConfigurableProvider | undefined,
+    modelId: string,
+    modelName: string,
+    declared: readonly ('text' | 'image')[] | undefined,
+  ): ImageCapability {
+    if (declared?.includes('image')) {
+      return { status: 'declared', source: 'dsh-model-info', modalities: normalizeModalities(declared) }
+    }
+    if (adapterKind === 'deepseek') {
+      return { status: 'unsupported', source: 'deepseek-text-only', modalities: ['text'] }
+    }
+    const inPiAiCatalog = route !== undefined && piAiBuiltinModelFacts(route.provider, modelId) !== undefined
+    if (inPiAiCatalog) {
+      return { status: 'unsupported', source: 'pi-ai-catalog', modalities: declared === undefined ? ['text'] : normalizeModalities(declared) }
+    }
+    return {
+      status: 'unverified',
+      source: 'missing',
+      modalities: declared === undefined || declared.length === 0 ? ['text'] : normalizeModalities(declared),
+      reason: `${modelName} 不在锁定的 pi-ai 目录中，DSH 也未声明它支持图片，因此预检不能自动放行，需要你确认。`,
+    }
   }
 
   private resolveProtocol(route: DshConfigurableProvider | undefined, modelId: string): string | undefined {
@@ -218,6 +249,13 @@ function adapterInfo(route: DshConfigurableProvider | undefined, provider: strin
 function normalizeModalities(value: readonly ('text' | 'image')[] | undefined): readonly ('text' | 'image')[] {
   if (value === undefined || value.length === 0) return ['text']
   return [...new Set(value)].sort()
+}
+
+export interface ImageCapability {
+  readonly status: 'declared' | 'unsupported' | 'unverified'
+  readonly source: 'declared' | 'dsh-model-info' | 'provider-profile' | 'pi-ai-catalog' | 'deepseek-text-only' | 'missing'
+  readonly modalities: readonly ('text' | 'image')[]
+  readonly reason?: string
 }
 
 function atPath(value: unknown, path: readonly string[]): unknown {

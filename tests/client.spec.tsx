@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RPC_ENDPOINTS } from '../src/contracts/rpc.js'
 import { ModelPkOverlay, ModelPkSettingsSection } from '../src/client/App.js'
 import { ModelPkApi } from '../src/client/api.js'
@@ -36,8 +36,12 @@ describe('formal product UI', () => {
     await controller.open()
     render(<ModelPkOverlay controller={controller} />)
     expect(screen.getByRole('dialog', { name: 'Model PK' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '创建对照实验' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '预检并继续' })).toBeDisabled()
+    expect(screen.queryByText('请先填写提示词。')).not.toBeInTheDocument()
     expect(screen.getByText('执行环境就绪')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '任务类型' })).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('combobox', { name: '任务类型' }), { target: { value: 'Other' } })
+    expect(screen.getByPlaceholderText('例如：代码审查、文档改写')).toBeInTheDocument()
   })
 
   it('defaults concurrency to min(4, N) when model selection changes', async () => {
@@ -58,9 +62,41 @@ describe('formal product UI', () => {
     const controller = new ModelPkUiController(new ModelPkApi(context(models)))
     await controller.open()
     render(<ModelPkOverlay controller={controller} />)
+    fireEvent.change(screen.getByRole('textbox', { name: /提示词/u }), { target: { value: '比较这两个模型' } })
     fireEvent.click(screen.getByRole('checkbox', { name: /Model 1/u }))
+    expect(screen.getByRole('button', { name: '预检并继续' })).toBeDisabled()
     fireEvent.click(screen.getByRole('checkbox', { name: /Model 2/u }))
     expect(screen.getByRole('combobox', { name: '并发数' })).toHaveValue('2')
+    expect(screen.getByRole('button', { name: '预检并继续' })).toBeEnabled()
+  })
+
+  it('shows a thumbnail after an image is uploaded', async () => {
+    const draft = fixtureDraft()
+    const withImage = {
+      ...draft,
+      attachments: [{
+        attachmentId: '00000000-0000-4000-8000-000000000010',
+        draftId: draft.draftId,
+        ordinal: 0,
+        name: 'cover.png',
+        mimeType: 'image/png' as const,
+        byteLength: 4,
+        hash: 'sha256:preview' as const,
+        state: 'READY' as const,
+      }],
+    }
+    const clientContext = context()
+    clientContext.connection.rpc.call = async (_channel, endpoint) => {
+      const value = endpoint === RPC_ENDPOINTS.capabilitiesGet
+        ? fixtureCapability()
+        : endpoint === RPC_ENDPOINTS.modelsList ? [] : withImage
+      return { ok: true, value: { ok: true, value } }
+    }
+    const controller = new ModelPkUiController(new ModelPkApi(clientContext))
+    vi.spyOn(controller, 'previewUrl').mockReturnValue('blob:preview')
+    await controller.open()
+    render(<ModelPkOverlay controller={controller} />)
+    expect(screen.getByRole('img', { name: 'cover.png' })).toHaveAttribute('src', 'blob:preview')
   })
 
   it('cancels the live poll before deleting the currently viewed experiment', async () => {

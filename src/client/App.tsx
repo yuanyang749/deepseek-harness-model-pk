@@ -21,11 +21,26 @@ export function ModelPkSettingsSection({ controller }: { controller: ModelPkUiCo
 
 export function ModelPkOverlay({ controller }: { controller: ModelPkUiController }): JSX.Element | null {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
+  useEffect(() => {
+    if (!snapshot.open) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') controller.close()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [controller, snapshot.open])
   if (!snapshot.open || typeof document === 'undefined') return null
   return createPortal(
     <div className="mpk-shell" role="dialog" aria-modal="true" aria-label="Model PK">
       <style>{MODEL_PK_CSS}</style>
-      <Header screen={snapshot.screen} onNavigate={screen => controller.show(screen)} onClose={() => controller.close()} hasExperiment={snapshot.experiment !== null} />
+      <Header
+        screen={snapshot.screen}
+        onNavigate={screen => controller.show(screen)}
+        onClose={() => controller.close()}
+        hasExperiment={snapshot.experiment !== null}
+        ready={snapshot.capability?.executionEnabled ?? false}
+        envDetail={`DSH ${snapshot.capability?.expectedDshVersion ?? '—'} · ${snapshot.capability?.hostPlatform ?? '—'}/${snapshot.capability?.hostArch ?? '—'}`}
+      />
       {snapshot.error === null ? null : <ErrorBanner snapshot={snapshot} onClose={() => controller.clearError()} />}
       <main className="mpk-content">
         {snapshot.screen === 'create' ? <CreatePage key={snapshot.draft?.draftId ?? 'loading'} snapshot={snapshot} controller={controller} /> : null}
@@ -39,11 +54,18 @@ export function ModelPkOverlay({ controller }: { controller: ModelPkUiController
   )
 }
 
-function Header(props: { screen: UiScreen; onNavigate(screen: UiScreen): void; onClose(): void; hasExperiment: boolean }): JSX.Element {
+function Header(props: {
+  screen: UiScreen
+  onNavigate(screen: UiScreen): void
+  onClose(): void
+  hasExperiment: boolean
+  ready: boolean
+  envDetail: string
+}): JSX.Element {
   const tabs: readonly [UiScreen, string][] = [
     ['create', '创建'],
-    ['preflight', 'Preflight'],
-    ['experiment', 'Experiment'],
+    ['preflight', '预检'],
+    ['experiment', '实验'],
     ['storage', '本地存储'],
   ]
   return (
@@ -56,7 +78,14 @@ function Header(props: { screen: UiScreen; onNavigate(screen: UiScreen): void; o
             onClick={() => props.onNavigate(screen)}>{label}</button>
         ))}
       </nav>
-      <button className="mpk-close" type="button" onClick={props.onClose} aria-label="关闭 Model PK">×</button>
+      <div className="mpk-header-end">
+        <div className="mpk-env" data-ready={props.ready} title={props.envDetail}>
+          <span className="mpk-env-dot" aria-hidden="true" />
+          <span className="mpk-env-label">{props.ready ? '执行环境就绪' : '执行入口已阻断'}</span>
+          <span className="mpk-env-detail">{props.envDetail}</span>
+        </div>
+        <button className="mpk-close" type="button" onClick={props.onClose} aria-label="关闭 Model PK">×</button>
+      </div>
     </header>
   )
 }
@@ -71,6 +100,19 @@ function ErrorBanner({ snapshot, onClose }: { snapshot: UiSnapshot; onClose(): v
       <details><summary>技术详情</summary><pre className="mpk-mono">{error.technicalMessage}{error.providerRequestId ? `\nrequest: ${error.providerRequestId}` : ''}</pre></details>
     </div>
   )
+}
+
+const TASK_TYPE_PRESETS = [
+  { value: 'Coding', label: '编程' },
+  { value: 'Reasoning', label: '推理' },
+  { value: 'Writing', label: '写作' },
+  { value: 'Analysis', label: '分析' },
+] as const
+const TASK_TYPE_CUSTOM = 'Other'
+const TASK_TYPE_PRESET_VALUES = new Set<string>(TASK_TYPE_PRESETS.map(item => item.value))
+
+function requiredMark(): JSX.Element {
+  return <span className="mpk-required" aria-hidden="true">*</span>
 }
 
 interface DraftForm {
@@ -129,27 +171,11 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
     const files = [...event.clipboardData.files]
     if (files.length > 0) { event.preventDefault(); void upload(files) }
   }
-  const ready = snapshot.capability?.executionEnabled ?? false
   const blockers = snapshot.capability?.blockers ?? []
+  const selectedCount = form.selectedModelConfigIds.length
+  const canPreflight = !snapshot.busy && selectedCount >= LIMITS.modelMin && form.prompt.trim() !== '' && (snapshot.capability?.executionEnabled ?? false)
   return (
     <section className="mpk-page">
-      <header className="mpk-titlebar">
-        <div className="mpk-titlebar-copy">
-          <h1>创建对照实验</h1>
-          <p>冻结一份任务包，让 2–10 个模型在相同执行环境中独立完成。</p>
-        </div>
-        <div className="mpk-titlebar-meta">
-          <div className="mpk-env" data-ready={ready}>
-            <span className="mpk-env-dot" aria-hidden="true" />
-            <span className="mpk-env-label">{ready ? '执行环境就绪' : '执行入口已阻断'}</span>
-            <span className="mpk-env-detail">DSH {snapshot.capability?.expectedDshVersion ?? '—'} · {snapshot.capability?.hostPlatform ?? '—'}/{snapshot.capability?.hostArch ?? '—'}</span>
-          </div>
-          <div className="mpk-actions">
-            <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.newDraft() }}>新建草稿</button>
-            <button className="mpk-btn" type="button" disabled={snapshot.busy} onClick={() => { void preflight() }}>运行预检</button>
-          </div>
-        </div>
-      </header>
       {blockers.length > 0 ? (
         <details className="mpk-env-blockers">
           <summary>{blockers.length} 个阻断项</summary>
@@ -159,20 +185,18 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
       <div className="mpk-grid">
         <div className="mpk-stack">
           <div className="mpk-card mpk-stack">
+            <div className="mpk-field-row">
+              <label className="mpk-field">
+                <span>任务名称 {requiredMark()}</span>
+                <input className="mpk-input" maxLength={120} value={form.taskName} onChange={event => setField('taskName', event.target.value)} />
+                <small className="mpk-meta">用于归档目录命名。{[...form.taskName].length} / 120</small>
+              </label>
+              <TaskTypeField value={form.taskType} onChange={value => setField('taskType', value)} />
+            </div>
             <label className="mpk-field">
-              <span>任务名称 *</span>
-              <input className="mpk-input" maxLength={120} value={form.taskName} onChange={event => setField('taskName', event.target.value)} />
-              <small className="mpk-meta">用于实验列表与归档目录命名。最多 120 个字符，当前 {[...form.taskName].length} / 120。</small>
-            </label>
-            <label className="mpk-field">
-              <span>任务类型</span>
-              <input className="mpk-input" maxLength={64} placeholder="例如：代码审查、文档改写" value={form.taskType} onChange={event => setField('taskType', event.target.value)} />
-              <small className="mpk-meta">可选分类标签，不会改变系统提示词、工具权限或执行策略。</small>
-            </label>
-            <label className="mpk-field">
-              <span>提示词 *</span>
+              <span>提示词 {requiredMark()}</span>
               <textarea className="mpk-textarea" value={form.prompt} onChange={event => setField('prompt', event.target.value)} />
-              <small className="mpk-meta">所有参赛模型收到同一份原文；空格与换行按原始 UTF-8 保留。当前 {formatBytes(new TextEncoder().encode(form.prompt).byteLength)} / 1 MiB。</small>
+              <small className="mpk-meta">所有模型收到同一份原文。当前 {formatBytes(new TextEncoder().encode(form.prompt).byteLength)} / 1 MiB。</small>
             </label>
           </div>
           <div className="mpk-card mpk-stack">
@@ -183,28 +207,55 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
             <AttachmentList draft={draft} controller={controller} />
           </div>
           <div className="mpk-card mpk-stack">
-            <div><h2 className="mpk-section-title">工作区基线</h2><div className="mpk-meta">默认为空。填写本地目录后会完整冻结快照，不应用 .gitignore。</div></div>
-            {draft.baseline === null ? <div className="mpk-actions"><input className="mpk-input" aria-label="工作区基线本地目录" placeholder="例如：/Users/you/project" value={baselinePath} onChange={event => setBaselinePath(event.target.value)} /><button className="mpk-btn mpk-btn-secondary" disabled={baselinePath.trim() === ''} type="button" onClick={async () => { if (await persist()) await controller.selectBaseline(baselinePath) }}>扫描并冻结</button></div> : (
-              <div className="mpk-stack"><div><strong>{draft.baseline.fileCount.toLocaleString()} 个文件 · {formatBytes(draft.baseline.byteLength)}</strong><div className="mpk-hash">{draft.baseline.objectHash}</div><div className="mpk-path">{draft.baseline.sourcePath}</div></div><div><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.clearBaseline() }}>清除基线</button></div></div>
+            <div>
+              <h2 className="mpk-section-title">项目起始文件 <span className="mpk-pill">可选</span></h2>
+              <p className="mpk-meta">不填也可以开跑：各模型只拿到提示词和图片。若任务要改代码或读写项目文件，在此填本地目录，点「复制为起始快照」后会完整拷贝一份；之后每个模型都从这份相同文件开始，互不影响，也不会改你的原目录。不应用 .gitignore。</p>
+            </div>
+            {draft.baseline === null ? (
+              <div className="mpk-stack">
+                <div className="mpk-actions">
+                  <input className="mpk-input" aria-label="项目起始文件本地目录" placeholder="例如：/Users/you/project" value={baselinePath} onChange={event => setBaselinePath(event.target.value)} />
+                  <button className="mpk-btn mpk-btn-secondary" disabled={baselinePath.trim() === ''} type="button" onClick={async () => { if (await persist()) await controller.selectBaseline(baselinePath) }}>复制为起始快照</button>
+                </div>
+                <small className="mpk-meta">请粘贴本机绝对路径。扫描可能需要一些时间，目录越大越久。</small>
+              </div>
+            ) : (
+              <div className="mpk-stack">
+                <div>
+                  <strong>已复制 {draft.baseline.fileCount.toLocaleString()} 个文件 · {formatBytes(draft.baseline.byteLength)}</strong>
+                  <div className="mpk-meta">各模型将从这份快照启动，不会写入原目录。</div>
+                  <div className="mpk-hash" title={draft.baseline.objectHash}>{maskHash(draft.baseline.objectHash)}</div>
+                  <div className="mpk-path">{draft.baseline.sourcePath}</div>
+                </div>
+                <div><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.clearBaseline() }}>改回空起始目录</button></div>
+              </div>
             )}
           </div>
         </div>
-        <aside className="mpk-stack">
+        <aside className="mpk-rail">
           <div className="mpk-card mpk-models">
             <div className="mpk-models-head">
-              <h2 className="mpk-section-title">模型 <span className="mpk-pill">{form.selectedModelConfigIds.length} / 10</span></h2>
+              <h2 className="mpk-section-title">模型 <span className="mpk-pill">{selectedCount} / {LIMITS.modelMax}</span></h2>
               <input className="mpk-input" aria-label="搜索模型" placeholder="搜索模型或提供商" value={search} onChange={event => setSearch(event.target.value)} />
             </div>
             <div className="mpk-model-list">{filtered.map(model => <ModelOption key={model.modelConfigId} model={model} checked={form.selectedModelConfigIds.includes(model.modelConfigId)} onChange={() => toggleModel(model)} />)}</div>
-          </div>
-          <div className="mpk-card mpk-stack">
-            <label className="mpk-field">
-              <span>并发数</span>
-              <select className="mpk-select" aria-label="并发数" value={Math.min(form.concurrency, Math.max(1, form.selectedModelConfigIds.length))} onChange={event => setField('concurrency', Number(event.target.value))}>{Array.from({ length: Math.max(1, form.selectedModelConfigIds.length) }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value}</option>)}</select>
-              <small className="mpk-meta">同时执行的模型路数。选模型后默认取 min(4, N)，之后可改；排队中的任务不计入 30 分钟时限。</small>
-            </label>
-            <div className="mpk-divider" />
-            <button className="mpk-btn" type="button" disabled={snapshot.busy || form.selectedModelConfigIds.length < 2} onClick={() => { void preflight() }}>保存并运行 Preflight</button>
+            <div className="mpk-rail-foot">
+              <label className="mpk-field">
+                <span>并发数</span>
+                <select className="mpk-select" aria-label="并发数" value={Math.min(form.concurrency, Math.max(1, selectedCount))} onChange={event => setField('concurrency', Number(event.target.value))}>{Array.from({ length: Math.max(1, selectedCount) }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value}</option>)}</select>
+                <small className="mpk-meta">同时执行的路数，默认 min(4, N)。排队不计入 30 分钟时限。</small>
+              </label>
+              <button className="mpk-btn mpk-btn-block" type="button" disabled={!canPreflight} onClick={() => { void preflight() }}>预检并继续</button>
+              <button
+                className="mpk-text-btn"
+                type="button"
+                onClick={() => {
+                  if (confirm('清空当前填写的名称、提示词、图片、起始文件和模型选择，重新开始一份对照？已开始的实验不会被删除。')) {
+                    void controller.newDraft()
+                  }
+                }}
+              >清空并重新填写</button>
+            </div>
           </div>
         </aside>
       </div>
@@ -212,8 +263,52 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
   )
 }
 
+function TaskTypeField({ value, onChange }: { value: string; onChange(value: string): void }): JSX.Element {
+  const selectValue = value === '' || TASK_TYPE_PRESET_VALUES.has(value) || value === TASK_TYPE_CUSTOM
+    ? value
+    : TASK_TYPE_CUSTOM
+  return (
+    <label className="mpk-field">
+      <span>任务类型</span>
+      <select
+        className="mpk-select"
+        aria-label="任务类型"
+        value={selectValue}
+        onChange={event => {
+          onChange(event.target.value)
+        }}
+      >
+        <option value="">不指定</option>
+        {TASK_TYPE_PRESETS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+        <option value={TASK_TYPE_CUSTOM}>自定义</option>
+      </select>
+      {selectValue === TASK_TYPE_CUSTOM ? (
+        <input
+          className="mpk-input"
+          maxLength={64}
+          placeholder="例如：代码审查、文档改写"
+          value={value === TASK_TYPE_CUSTOM ? '' : value}
+          onChange={event => onChange(event.target.value)}
+        />
+      ) : null}
+      <small className="mpk-meta">只作分类标签，不会改变提示词、工具或执行策略。</small>
+    </label>
+  )
+}
+
 function ModelOption({ model, checked, onChange }: { model: ModelListItem; checked: boolean; onChange(): void }): JSX.Element {
-  return <label className="mpk-model" data-disabled={model.support !== 'SUPPORTED'}><input type="checkbox" checked={checked} disabled={model.support !== 'SUPPORTED'} onChange={onChange} /><span><span className="mpk-model-name">{model.displayName}</span><span className="mpk-model-sub">{model.providerDisplayName} · {model.modelId}</span></span><span className={`mpk-pill ${model.support === 'SUPPORTED' ? 'mpk-pill-ready' : 'mpk-pill-blocked'}`}>{model.support}</span>{model.supportReason ? <span className="mpk-model-sub" style={{ gridColumn: '2/4' }}>{model.supportReason}</span> : null}</label>
+  const blocked = model.support !== 'SUPPORTED'
+  return (
+    <label className="mpk-model" data-disabled={blocked} data-checked={checked}>
+      <input type="checkbox" checked={checked} disabled={blocked} onChange={onChange} />
+      <span className="mpk-model-copy">
+        <span className="mpk-model-name">{model.displayName}</span>
+        <span className="mpk-model-sub">{model.providerDisplayName} · {model.modelId}</span>
+        {model.supportReason ? <span className="mpk-model-sub">{model.supportReason}</span> : null}
+      </span>
+      {blocked ? <span className="mpk-pill mpk-pill-blocked">不可用</span> : null}
+    </label>
+  )
 }
 
 function AttachmentList({ draft, controller }: { draft: UiSnapshot['draft'] & {}; controller: ModelPkUiController }): JSX.Element | null {
@@ -227,18 +322,89 @@ function AttachmentList({ draft, controller }: { draft: UiSnapshot['draft'] & {}
     next[to] = item
     void controller.reorderAttachments(next)
   }
-  return <div>{draft.attachments.map((attachment, index) => <div className="mpk-attachment" key={attachment.attachmentId}><span className="mpk-order">{index + 1}</span><span><strong style={{ fontSize: 12 }}>{attachment.name}</strong><span className="mpk-meta" style={{ display: 'block' }}>{attachment.mimeType} · {formatBytes(attachment.byteLength)}</span><span className="mpk-hash">{attachment.hash}</span></span><span className="mpk-actions"><button className="mpk-btn mpk-btn-secondary mpk-btn-small" aria-label="上移" disabled={index === 0} type="button" onClick={() => move(index, -1)}>↑</button><button className="mpk-btn mpk-btn-secondary mpk-btn-small" aria-label="下移" disabled={index === draft.attachments.length - 1} type="button" onClick={() => move(index, 1)}>↓</button><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.removeAttachment(attachment.attachmentId) }}>移除</button></span></div>)}</div>
+  return (
+    <div className="mpk-attachment-list">
+      {draft.attachments.map((attachment, index) => {
+        const preview = controller.previewUrl(attachment.hash) ?? controller.previewUrl(attachment.name)
+        return (
+          <div className="mpk-attachment" key={attachment.attachmentId}>
+            <span className="mpk-order">{index + 1}</span>
+            {preview === null
+              ? <span className="mpk-thumb" aria-hidden="true">{attachment.name.slice(0, 1).toUpperCase()}</span>
+              : <img className="mpk-thumb" src={preview} alt={attachment.name} />}
+            <span>
+              <strong style={{ fontSize: 12 }}>{attachment.name}</strong>
+              <span className="mpk-meta" style={{ display: 'block' }}>{attachment.mimeType} · {formatBytes(attachment.byteLength)}</span>
+              <span className="mpk-hash" title={attachment.hash}>{maskHash(attachment.hash)}</span>
+            </span>
+            <span className="mpk-actions">
+              <button className="mpk-btn mpk-btn-secondary mpk-btn-small" aria-label="上移" disabled={index === 0} type="button" onClick={() => move(index, -1)}>↑</button>
+              <button className="mpk-btn mpk-btn-secondary mpk-btn-small" aria-label="下移" disabled={index === draft.attachments.length - 1} type="button" onClick={() => move(index, 1)}>↓</button>
+              <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.removeAttachment(attachment.attachmentId) }}>移除</button>
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 function PreflightPage({ snapshot, controller }: { snapshot: UiSnapshot; controller: ModelPkUiController }): JSX.Element {
   const preflight = snapshot.preflight
   if (preflight === null) return <section className="mpk-page mpk-page-narrow"><Loading label="尚未生成 Preflight 快照" /><div className="mpk-actions"><button className="mpk-btn mpk-btn-secondary" onClick={() => controller.show('create')}>返回创建页</button></div></section>
   const confirmed = preflight.confirmedSnapshotHash === preflight.snapshotHash
-  return <section className="mpk-page mpk-page-narrow"><div className="mpk-titlebar"><div><div className="mpk-kicker">Frozen snapshot</div><h1>Preflight · {preflight.status}</h1><p>{preflight.taskPackage.taskName} · {preflight.models.length} models · 并发 {preflight.executionConditions.concurrency}</p></div><span className={`mpk-pill ${statusClass(preflight.status)}`}>{preflight.status}</span></div><div className="mpk-stack"><PreflightSummary value={preflight} /><div className="mpk-card">{preflight.checks.map(check => <div className="mpk-check" key={check.id}><span className={`mpk-pill ${statusClass(check.status)}`}>{check.status}</span><div><div className="mpk-check-title">{check.label}</div><div className="mpk-check-summary">{check.summary}</div></div><span className="mpk-meta">{check.id}</span>{check.diagnostics || check.error ? <details><summary>诊断</summary><pre className="mpk-mono">{JSON.stringify(check.diagnostics ?? check.error, null, 2)}</pre></details> : null}</div>)}</div><div className="mpk-card mpk-actions"><button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => controller.show('create')}>返回修改</button><span className="mpk-space" />{preflight.status === 'WARNING' && !confirmed ? <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.confirmWarning() }}>确认当前警告快照</button> : null}<button className="mpk-btn" type="button" disabled={snapshot.busy || preflight.status === 'BLOCKED' || preflight.status === 'WARNING' && !confirmed} onClick={() => { void controller.startExperiment() }}>{snapshot.busy ? '正在持久化…' : 'Start Experiment'}</button></div></div></section>
+  const needsImageConfirm = preflight.checks.some(check => check.id === 'modalities' && check.status === 'WARNING') && !confirmed
+  const headline = preflight.status === 'BLOCKED' ? '已阻断' : needsImageConfirm ? '需确认' : '通过'
+  return (
+    <section className="mpk-page mpk-page-narrow">
+      <div className="mpk-titlebar">
+        <div>
+          <div className="mpk-kicker">已冻结快照</div>
+          <h1>预检 · {headline}</h1>
+          <p>{preflight.taskPackage.taskName} · {preflight.models.length} 个模型 · 并发 {preflight.executionConditions.concurrency}</p>
+        </div>
+        <span className={`mpk-pill ${headline === '通过' ? 'mpk-pill-ready' : headline === '需确认' ? 'mpk-pill-warning' : 'mpk-pill-blocked'}`}>{headline}</span>
+      </div>
+      <div className="mpk-stack">
+        <PreflightSummary value={preflight} />
+        <div className="mpk-card">
+          {preflight.checks.map(check => (
+            <div className="mpk-check" key={check.id}>
+              <span className={`mpk-pill ${checkBadge(check, confirmed).tone}`}>{checkBadge(check, confirmed).label}</span>
+              <div>
+                <div className="mpk-check-title">{check.label}</div>
+                <div className="mpk-check-summary">{check.id === 'modalities' && check.status === 'WARNING' && confirmed ? '已由你确认这些模型支持图片。' : check.summary}</div>
+                {modalityRows(check).length > 0 ? (
+                  <table className="mpk-mini-table">
+                    <thead><tr><th>模型</th><th>原因</th></tr></thead>
+                    <tbody>{modalityRows(check).map(row => <tr key={row.model}><td>{row.model}</td><td>{row.reason}</td></tr>)}</tbody>
+                  </table>
+                ) : null}
+              </div>
+              <span className="mpk-meta">{check.id}</span>
+              {check.status === 'BLOCKED' && (check.error || check.diagnostics) ? <details><summary>诊断</summary><pre className="mpk-mono">{JSON.stringify(check.diagnostics ?? check.error, null, 2)}</pre></details> : null}
+            </div>
+          ))}
+        </div>
+        {needsImageConfirm ? (
+          <div className="mpk-card mpk-stack">
+            <strong>需要你确认图片能力</strong>
+            <p className="mpk-meta">上表中的模型未收录在锁定目录里。确认它们能识别图片后再继续。</p>
+            <button className="mpk-btn" type="button" onClick={() => { void controller.confirmWarning() }}>我确认这些模型支持图片</button>
+          </div>
+        ) : null}
+        <div className="mpk-card mpk-actions">
+          <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => controller.show('create')}>返回修改</button>
+          <span className="mpk-space" />
+          <button className="mpk-btn" type="button" disabled={snapshot.busy || preflight.status === 'BLOCKED' || needsImageConfirm} onClick={() => { void controller.startExperiment() }}>{snapshot.busy ? '正在持久化…' : '开始对照'}</button>
+        </div>
+      </div>
+    </section>
+  )
 }
 
 function PreflightSummary({ value }: { value: PreflightSnapshot }): JSX.Element {
-  return <div className="mpk-card mpk-stack"><div className="mpk-summary-grid"><Stat label="模型" value={String(value.models.length)} /><Stat label="图片" value={String(value.taskPackage.attachments.length)} /><Stat label="工作区基线" value={value.taskPackage.baseline === null ? '空' : formatBytes(value.taskPackage.baseline.byteLength)} /><Stat label="并发数" value={String(value.executionConditions.concurrency)} /><Stat label="容量估算" value={formatBytes(value.capacityEstimateBytes)} /></div><details className="mpk-diagnostics"><summary>指纹、Adapter 与权限诊断</summary><pre className="mpk-mono">{JSON.stringify({ snapshotHash: value.snapshotHash, taskPackageHash: value.taskPackageHash, resolvedHarnessFingerprint: value.resolvedHarnessFingerprint, executionConditionsHash: value.executionConditionsHash, models: value.models.map(model => ({ model: model.modelName, adapter: `${model.adapterPackage}@${model.adapterVersion}`, protocol: model.protocol, contextWindow: model.contextWindow, outputTokenCapacity: model.outputTokenCapacity, maxOutputTokens: model.maxOutputTokens, revision: model.revision, serializers: model.serializerDependencies, fingerprint: model.fingerprint })), permissions: value.resolvedHarness.permissions }, null, 2)}</pre></details></div>
+  return <div className="mpk-card mpk-stack"><div className="mpk-summary-grid"><Stat label="模型" value={String(value.models.length)} /><Stat label="图片" value={String(value.taskPackage.attachments.length)} /><Stat label="起始文件" value={value.taskPackage.baseline === null ? '空' : formatBytes(value.taskPackage.baseline.byteLength)} /><Stat label="并发数" value={String(value.executionConditions.concurrency)} /><Stat label="容量估算" value={formatBytes(value.capacityEstimateBytes)} /></div><details className="mpk-diagnostics"><summary>指纹、Adapter 与权限诊断</summary><pre className="mpk-mono">{JSON.stringify({ snapshotHash: value.snapshotHash, taskPackageHash: value.taskPackageHash, resolvedHarnessFingerprint: value.resolvedHarnessFingerprint, executionConditionsHash: value.executionConditionsHash, models: value.models.map(model => ({ model: model.modelName, adapter: `${model.adapterPackage}@${model.adapterVersion}`, protocol: model.protocol, contextWindow: model.contextWindow, outputTokenCapacity: model.outputTokenCapacity, maxOutputTokens: model.maxOutputTokens, revision: model.revision, serializers: model.serializerDependencies, fingerprint: model.fingerprint })), permissions: value.resolvedHarness.permissions }, null, 2)}</pre></details></div>
 }
 
 function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; controller: ModelPkUiController }): JSX.Element {
@@ -278,8 +444,24 @@ function Loading({ label }: { label: string }): JSX.Element {
   return <div className="mpk-empty" role="status">{label}</div>
 }
 
-function statusClass(status: string): string {
-  return status === 'READY' || status === 'PASS' ? 'mpk-pill-ready' : status === 'WARNING' ? 'mpk-pill-warning' : 'mpk-pill-blocked'
+function modalityRows(check: { readonly diagnostics?: Readonly<Record<string, unknown>> }): readonly { readonly model: string; readonly reason: string }[] {
+  const rows = check.diagnostics?.unverifiedModels
+  if (!Array.isArray(rows)) return []
+  return rows.flatMap(row => {
+    if (typeof row !== 'object' || row === null) return []
+    const model = (row as { model?: unknown }).model
+    const reason = (row as { reason?: unknown }).reason
+    return typeof model === 'string' && typeof reason === 'string' ? [{ model, reason }] : []
+  })
+}
+
+function checkBadge(check: { readonly id: string; readonly status: string }, confirmed: boolean): { readonly label: string; readonly tone: string } {
+  if (check.id === 'modalities' && check.status === 'WARNING' && confirmed) {
+    return { label: '已确认', tone: 'mpk-pill-ready' }
+  }
+  if (check.status === 'PASS') return { label: '通过', tone: 'mpk-pill-ready' }
+  if (check.status === 'WARNING') return { label: '需确认', tone: 'mpk-pill-warning' }
+  return { label: '已阻断', tone: 'mpk-pill-blocked' }
 }
 
 function stateClass(state: string): string {
@@ -297,4 +479,10 @@ function formatBytes(bytes: number): string {
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+}
+
+function maskHash(value: string): string {
+  const digest = value.startsWith('sha256:') ? value.slice('sha256:'.length) : value
+  if (digest.length <= 12) return value
+  return `${value.startsWith('sha256:') ? 'sha256:' : ''}${digest.slice(0, 6)}******${digest.slice(-6)}`
 }

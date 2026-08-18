@@ -76,6 +76,36 @@ describe('model catalog snapshots', () => {
     })
   })
 
+  it('leaves a custom Gemini route unverified when no modalities are declared', async () => {
+    const catalog = new ModelCatalog(contextFor({
+      providerRoute: 'my-newapi',
+      model: {
+        provider: 'my-newapi',
+        id: 'gemini-3.7-flash-high',
+        name: 'gemini-3.7-flash-high',
+        context: { contextWindow: 1_000_000 },
+      },
+      profile: {
+        api: 'openai-completions',
+        defaultMaxTokens: 16_384,
+        models: [{ id: 'gemini-3.7-flash-high' }],
+      },
+    }))
+
+    const [item] = await catalog.list()
+    expect(item?.inputModalities).toEqual(['text'])
+    if (item === undefined) throw new Error('fixture model missing')
+    const snapshot = await catalog.snapshot(item.modelConfigId)
+    expect(catalog.imageCapability(snapshot)).toMatchObject({
+      status: 'unverified',
+      source: 'missing',
+    })
+    expect(catalog.imageCapability({ ...snapshot, inputModalities: ['text'] })).toMatchObject({
+      status: 'unverified',
+      source: 'missing',
+    })
+  })
+
   it('exposes immutable facts from the exact pinned pi-ai catalog', () => {
     expect(piAiBuiltinModelFacts('anthropic', 'claude-haiku-4-5')).toEqual({
       protocol: 'anthropic-messages',

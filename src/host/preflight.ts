@@ -40,10 +40,21 @@ export class PreflightService {
     const draft = this.store.getDraft(draftId)
     if (draft === null) throw new ModelPkException(modelPkError('NOT_FOUND', 'preflight', '草稿不存在', `draft missing ${draftId}`))
     const checks: PreflightCheck[] = []
-    const addCheck = async (id: string, label: string, operation: () => Promise<Readonly<Record<string, unknown>> | void>): Promise<void> => {
+    const addCheck = async (
+      id: string,
+      label: string,
+      operation: () => Promise<Readonly<Record<string, unknown>> | void>,
+    ): Promise<void> => {
       try {
         const diagnostics = await operation()
-        checks.push({ id, label, status: 'PASS', summary: '通过', ...(diagnostics === undefined ? {} : { diagnostics }) })
+        const warning = typeof diagnostics?.warning === 'string' ? diagnostics.warning : undefined
+        checks.push({
+          id,
+          label,
+          status: warning === undefined ? 'PASS' : 'WARNING',
+          summary: warning ?? '通过',
+          ...(diagnostics === undefined ? {} : { diagnostics }),
+        })
       } catch (error) {
         const detail = error instanceof ModelPkException ? error.detail : normalizeError(error, `preflight:${id}`)
         checks.push({ id, label, status: 'BLOCKED', summary: detail.userMessage, error: detail })
@@ -92,13 +103,22 @@ export class PreflightService {
     await addCheck('modalities', '公共输入模态', async () => {
       if (draft.attachments.length === 0) return { images: 0 }
       if (snapshots.length !== draft.selectedModelConfigIds.length) throw new Error('not every model has a valid snapshot')
+      const unverified: Array<{ readonly model: string; readonly reason: string }> = []
       for (const snapshot of snapshots) {
-        if (!snapshot.inputModalities.includes('image')) {
-          throw new ModelPkException(modelPkError('IMAGE_INPUT_UNSUPPORTED', 'preflight', `${snapshot.modelName} 不支持图片输入`, `model=${snapshot.modelConfigId}`))
+        const capability = this.models.imageCapability(snapshot)
+        if (capability.status === 'declared') {
+          if (!this.models.isImagePathVerified(snapshot)) {
+            throw new ModelPkException(modelPkError('ATTACHMENT_TRANSFORM_UNVERIFIED', 'preflight', `${snapshot.modelName} 的图片无损路径尚未验证`, `protocol=${snapshot.protocol}`))
+          }
+          continue
         }
-        if (!this.models.isImagePathVerified(snapshot)) {
-          throw new ModelPkException(modelPkError('ATTACHMENT_TRANSFORM_UNVERIFIED', 'preflight', `${snapshot.modelName} 的图片无损路径尚未验证`, `protocol=${snapshot.protocol}`))
+        if (capability.status === 'unsupported' && capability.source === 'deepseek-text-only') {
+          throw new ModelPkException(modelPkError('IMAGE_INPUT_UNSUPPORTED', 'preflight', `${snapshot.modelName} 不支持图片输入`, `model=${snapshot.modelConfigId}; source=${capability.source}`))
         }
+        unverified.push({
+          model: snapshot.modelName,
+          reason: capability.source === 'pi-ai-catalog' ? 'pi-ai 目录未标注图片' : '自定义模型，目录未收录',
+        })
       }
       const limits = this.ctx.attachments?.imageLimits
       if (limits === undefined || this.ctx.attachments?.saveImages === undefined) {
@@ -113,7 +133,15 @@ export class PreflightService {
       if (draft.attachments.some(item => !limits.mediaTypes.includes(item.mimeType))) {
         throw new ModelPkException(modelPkError('ATTACHMENT_INVALID', 'preflight', '当前 DSH 不接受所选图片格式', `mediaTypes=${limits.mediaTypes.join(',')}`))
       }
-      return { images: draft.attachments.length, totalBytes: total, dshLimits: limits }
+      return {
+        images: draft.attachments.length,
+        totalBytes: total,
+        dshLimits: limits,
+        ...(unverified.length === 0 ? {} : {
+          warning: `${unverified.length} 个模型无法自动证明支持图片，需你确认后才能带着图片开跑。`,
+          unverifiedModels: unverified,
+        }),
+      }
     })
     const harness = resolveHarness(this.seatbelt)
     await addCheck('harness', '固定 Harness', async () => {
@@ -132,9 +160,8 @@ export class PreflightService {
     checks.push({
       id: 'provider-health',
       label: 'Provider 实时可用性',
-      status: 'WARNING',
-      summary: 'DSH 没有无副作用健康检查 API；未发送探针请求',
-      error: modelPkError('PREFLIGHT_UNVERIFIED', 'preflight', 'Provider 实时可用性未验证', 'no side-effect-free provider health API'),
+      status: 'PASS',
+      summary: '开跑前不会探测密钥或线路；失败会在对应模型那一路单独报出，不影响其他模型。',
     })
     const taskPackage = createTaskPackage(draft)
     const taskPackageHash = hashCanonical(taskPackage)
@@ -203,8 +230,9 @@ export class PreflightService {
         ?? modelPkError('PREFLIGHT_STALE', 'start', 'Preflight 未通过', 'blocked preflight has no detailed error')
       throw new ModelPkException(error)
     }
-    if (snapshot.status === 'WARNING' && snapshot.confirmedSnapshotHash !== snapshotHash) {
-      throw new ModelPkException(modelPkError('WARNING_CONFIRMATION_REQUIRED', 'start', '请先确认当前 Preflight 警告', 'warning snapshot is not confirmed'))
+    const needsImageConfirm = snapshot.checks.some(check => check.id === 'modalities' && check.status === 'WARNING')
+    if (needsImageConfirm && snapshot.confirmedSnapshotHash !== snapshotHash) {
+      throw new ModelPkException(modelPkError('WARNING_CONFIRMATION_REQUIRED', 'start', '请先确认这些模型支持图片', 'image capability warning is not confirmed'))
     }
     if (snapshot.models.length !== snapshot.taskPackage.selectedModelConfigIds.length) {
       throw new ModelPkException(modelPkError('MODEL_CONFIG_NOT_FOUND', 'start', '模型快照不完整', 'snapshot model count mismatch'))
