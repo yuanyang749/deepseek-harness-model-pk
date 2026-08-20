@@ -355,9 +355,14 @@ export class ArchiveManager {
       if (input.finalResponse !== null) await publish('result.md', input.finalResponse)
       else entries.push({ path: 'result.md', hash: hashCanonical({ unavailable: true }), byteLength: 0, available: false, reason: 'no-final-response' })
       if (input.primaryError !== null) await publish('error.json', input.primaryError)
+      const completeness = [...entries, { path: 'metadata.json', available: true }, { path: 'archive-index.json', available: true }]
+        .every(entry => entry.available || optionalForAttempt(input.attempt, entry.path))
+        ? 'COMPLETE' as const
+        : 'PARTIAL' as const
       await publish('metadata.json', {
         ...input.attempt,
         state: input.attempt.pendingOutcome ?? 'FAILED',
+        archiveCompleteness: completeness,
         workspacePath: input.runtime === null ? null : '/workspace',
         artifactPath: input.runtime === null ? null : '/workspace/.model-pk-artifacts',
         cancelReason: input.cancelReason,
@@ -375,7 +380,7 @@ export class ArchiveManager {
       await publish('archive-index.json', index)
       await fsyncDirectory(attemptRoot)
       return {
-        completeness: entries.every(entry => entry.available || optionalForAttempt(input.attempt, entry.path)) ? 'COMPLETE' : 'PARTIAL',
+        completeness,
         workspaceTreeHash: workspaceManifest?.treeHash ?? null,
         indexHash: await sha256File(join(attemptRoot, 'archive-index.json')),
         error: null,

@@ -928,7 +928,6 @@ technicalMessage 必须脱敏。UI 默认展示 userMessage、code 和是否可�
 | WORKSPACE_NOT_READABLE | 否 | baseline 无法读取 |
 | ARCHIVE_NOT_WRITABLE | 否 | 实验目录无法安全写入 |
 | CONTROL_STORE_CAPACITY_UNAVAILABLE | 否 | Durable Control Store 不可写或无法预留最小控制容量 |
-| PREFLIGHT_UNVERIFIED | 是 | 无法验证实时可用性；作为 WARNING 而非 BLOCKED |
 
 ### 12.3 运行期错误码
 
@@ -1290,9 +1289,9 @@ deepseek-harness-model-pk/
 
 ### AC-009：Provider Preflight
 
-**Given** 一个 Provider 未配置、一个鉴权失败、一个无法验证实时可用性<br>
+**Given** 一个 Provider 未配置、一个鉴权失败<br>
 **When** 运行 Preflight<br>
-**Then** 前两个分别显示稳定 BLOCKED 错误码，第三个显示明确 WARNING；WARNING 未确认前 Start 禁用，确认后只对该 Preflight 快照有效；不创建任何 Attempt。
+**Then** 分别显示稳定 BLOCKED 错误码；不创建任何 Attempt。开跑前不探测 Provider 实时可用性，失败在对应 Run 中单独报出。
 
 ### AC-010：冻结后只读
 

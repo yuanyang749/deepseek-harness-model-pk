@@ -152,5 +152,9 @@ describe('self-contained archive', () => {
     )
     expect(await readFile(join(attemptPath, 'result.md'), 'utf8')).toBe('result-0')
     expect(await readFile(join(attemptPath, 'transcript.jsonl'), 'utf8')).toContain('assistant/message')
+    expect(JSON.parse(await readFile(join(attemptPath, 'metadata.json'), 'utf8'))).toMatchObject({
+      archiveCompleteness: 'COMPLETE',
+      state: 'SUCCEEDED',
+    })
   })
 })

@@ -173,7 +173,7 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
   }
   const blockers = snapshot.capability?.blockers ?? []
   const selectedCount = form.selectedModelConfigIds.length
-  const canPreflight = !snapshot.busy && selectedCount >= LIMITS.modelMin && form.prompt.trim() !== '' && (snapshot.capability?.executionEnabled ?? false)
+  const canPreflight = !snapshot.busy && selectedCount >= LIMITS.modelMin && form.prompt.trim() !== '' && draft.baseline !== null && (snapshot.capability?.executionEnabled ?? false)
   return (
     <section className="mpk-page">
       {blockers.length > 0 ? (
@@ -208,26 +208,34 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
           </div>
           <div className="mpk-card mpk-stack">
             <div>
-              <h2 className="mpk-section-title">项目起始文件 <span className="mpk-pill">可选</span></h2>
-              <p className="mpk-meta">不填也可以开跑：各模型只拿到提示词和图片。若任务要改代码或读写项目文件，在此填本地目录，点「复制为起始快照」后会完整拷贝一份；之后每个模型都从这份相同文件开始，互不影响，也不会改你的原目录。不应用 .gitignore。</p>
+              <h2 className="mpk-section-title">项目起始目录 {requiredMark()}</h2>
+              <div className="mpk-baseline-guide">
+                <p><strong>已有项目对照</strong>填写现成仓库或落地页目录。系统会完整复制一份快照，各模型从相同文件改起，互不影响，也不会改你的原目录。</p>
+                <p><strong>全新项目对照</strong>填写一个空文件夹。各模型从同一空白起点从零生成，例如同时写一个落地页。</p>
+                <p>两种情况都必须指定目录后再预检。复制时不应用 .gitignore，目录越大越久。</p>
+              </div>
             </div>
             {draft.baseline === null ? (
               <div className="mpk-stack">
                 <div className="mpk-actions">
-                  <input className="mpk-input" aria-label="项目起始文件本地目录" placeholder="例如：/Users/you/project" value={baselinePath} onChange={event => setBaselinePath(event.target.value)} />
+                  <input className="mpk-input" aria-label="项目起始目录" placeholder="已有项目或空目录的绝对路径" value={baselinePath} onChange={event => setBaselinePath(event.target.value)} />
+                  <button className="mpk-btn mpk-btn-secondary" type="button" onClick={async () => {
+                    const path = await controller.chooseBaselineFolder()
+                    if (path !== null) setBaselinePath(path)
+                  }}>选择目录</button>
                   <button className="mpk-btn mpk-btn-secondary" disabled={baselinePath.trim() === ''} type="button" onClick={async () => { if (await persist()) await controller.selectBaseline(baselinePath) }}>复制为起始快照</button>
                 </div>
-                <small className="mpk-meta">请粘贴本机绝对路径。扫描可能需要一些时间，目录越大越久。</small>
+                <small className="mpk-meta">可点「选择目录」用系统对话框，或直接粘贴绝对路径，再复制为快照。macOS 与 Windows 都支持。</small>
               </div>
             ) : (
               <div className="mpk-stack">
                 <div>
-                  <strong>已复制 {draft.baseline.fileCount.toLocaleString()} 个文件 · {formatBytes(draft.baseline.byteLength)}</strong>
-                  <div className="mpk-meta">各模型将从这份快照启动，不会写入原目录。</div>
+                  <strong>{draft.baseline.fileCount === 0 ? '全新项目对照' : '已有项目对照'} · {draft.baseline.fileCount.toLocaleString()} 个文件 · {formatBytes(draft.baseline.byteLength)}</strong>
+                  <div className="mpk-meta">{draft.baseline.fileCount === 0 ? '各模型将从同一空白目录从零生成。' : '各模型将从这份相同文件改起，不会写入原目录。'}</div>
                   <div className="mpk-hash" title={draft.baseline.objectHash}>{maskHash(draft.baseline.objectHash)}</div>
                   <div className="mpk-path">{draft.baseline.sourcePath}</div>
                 </div>
-                <div><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.clearBaseline() }}>改回空起始目录</button></div>
+                <div><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.clearBaseline() }}>更换起始目录</button></div>
               </div>
             )}
           </div>
@@ -374,15 +382,15 @@ function PreflightPage({ snapshot, controller }: { snapshot: UiSnapshot; control
               <div>
                 <div className="mpk-check-title">{check.label}</div>
                 <div className="mpk-check-summary">{check.id === 'modalities' && check.status === 'WARNING' && confirmed ? '已由你确认这些模型支持图片。' : check.summary}</div>
-                {modalityRows(check).length > 0 ? (
+                {checkTable(check).rows.length > 0 ? (
                   <table className="mpk-mini-table">
-                    <thead><tr><th>模型</th><th>原因</th></tr></thead>
-                    <tbody>{modalityRows(check).map(row => <tr key={row.model}><td>{row.model}</td><td>{row.reason}</td></tr>)}</tbody>
+                    <thead><tr>{checkTable(check).headers.map(header => <th key={header}>{header}</th>)}</tr></thead>
+                    <tbody>{checkTable(check).rows.map(row => <tr key={row[0]}>{row.map(cell => <td key={cell}>{cell}</td>)}</tr>)}</tbody>
                   </table>
                 ) : null}
               </div>
               <span className="mpk-meta">{check.id}</span>
-              {check.status === 'BLOCKED' && (check.error || check.diagnostics) ? <details><summary>诊断</summary><pre className="mpk-mono">{JSON.stringify(check.diagnostics ?? check.error, null, 2)}</pre></details> : null}
+              {check.status === 'BLOCKED' && (check.error || check.diagnostics) && checkTable(check).rows.length === 0 ? <details><summary>诊断</summary><pre className="mpk-mono">{JSON.stringify(check.diagnostics ?? check.error, null, 2)}</pre></details> : null}
             </div>
           ))}
         </div>
@@ -404,7 +412,7 @@ function PreflightPage({ snapshot, controller }: { snapshot: UiSnapshot; control
 }
 
 function PreflightSummary({ value }: { value: PreflightSnapshot }): JSX.Element {
-  return <div className="mpk-card mpk-stack"><div className="mpk-summary-grid"><Stat label="模型" value={String(value.models.length)} /><Stat label="图片" value={String(value.taskPackage.attachments.length)} /><Stat label="起始文件" value={value.taskPackage.baseline === null ? '空' : formatBytes(value.taskPackage.baseline.byteLength)} /><Stat label="并发数" value={String(value.executionConditions.concurrency)} /><Stat label="容量估算" value={formatBytes(value.capacityEstimateBytes)} /></div><details className="mpk-diagnostics"><summary>指纹、Adapter 与权限诊断</summary><pre className="mpk-mono">{JSON.stringify({ snapshotHash: value.snapshotHash, taskPackageHash: value.taskPackageHash, resolvedHarnessFingerprint: value.resolvedHarnessFingerprint, executionConditionsHash: value.executionConditionsHash, models: value.models.map(model => ({ model: model.modelName, adapter: `${model.adapterPackage}@${model.adapterVersion}`, protocol: model.protocol, contextWindow: model.contextWindow, outputTokenCapacity: model.outputTokenCapacity, maxOutputTokens: model.maxOutputTokens, revision: model.revision, serializers: model.serializerDependencies, fingerprint: model.fingerprint })), permissions: value.resolvedHarness.permissions }, null, 2)}</pre></details></div>
+  return <div className="mpk-card mpk-stack"><div className="mpk-summary-grid"><Stat label="模型" value={String(value.models.length)} /><Stat label="图片" value={String(value.taskPackage.attachments.length)} /><Stat label="起始目录" value={value.taskPackage.baseline === null ? '未指定' : value.taskPackage.baseline.fileCount === 0 ? '全新空白' : formatBytes(value.taskPackage.baseline.byteLength)} /><Stat label="并发数" value={String(value.executionConditions.concurrency)} /><Stat label="容量估算" value={formatBytes(value.capacityEstimateBytes)} /></div><details className="mpk-diagnostics"><summary>指纹、Adapter 与权限诊断</summary><pre className="mpk-mono">{JSON.stringify({ snapshotHash: value.snapshotHash, taskPackageHash: value.taskPackageHash, resolvedHarnessFingerprint: value.resolvedHarnessFingerprint, executionConditionsHash: value.executionConditionsHash, models: value.models.map(model => ({ model: model.modelName, adapter: `${model.adapterPackage}@${model.adapterVersion}`, protocol: model.protocol, contextWindow: model.contextWindow, outputTokenCapacity: model.outputTokenCapacity, maxOutputTokens: model.maxOutputTokens, revision: model.revision, serializers: model.serializerDependencies, fingerprint: model.fingerprint })), permissions: value.resolvedHarness.permissions }, null, 2)}</pre></details></div>
 }
 
 function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; controller: ModelPkUiController }): JSX.Element {
@@ -421,15 +429,16 @@ function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; contro
   })
   const comparison = compare.map(id => allAttempts.find(item => item.attempt.attemptId === id)).filter((item): item is { run: Run; attempt: Attempt } => item !== undefined)
   const toggleCompare = (attemptId: string): void => setCompare(current => current.includes(attemptId) ? current.filter(id => id !== attemptId) : current.length < 2 ? [...current, attemptId] : [current[1]!, attemptId])
-  return <section className="mpk-page"><div className="mpk-titlebar"><div><div className="mpk-kicker">{experiment.lifecycleState} · {experiment.outcome ?? 'IN PROGRESS'}</div><h1>{experiment.name}</h1><p>{experiment.experimentId} · 最后 cursor {experiment.latestCursor}</p></div><div className="mpk-actions"><button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.openFolder(experiment.experimentId) }}>Open Folder</button>{experiment.lifecycleState === 'ACTIVE' ? <button className="mpk-btn mpk-btn-danger" type="button" onClick={() => { if (confirm('停止当前 Experiment 的全部可取消 Attempt？')) void controller.stopAll() }}>Stop All</button> : null}{hasRetryableFailure ? <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.retryFailed() }}>Retry Failed</button> : null}</div></div><div className="mpk-stack"><div className="mpk-summary-grid"><Stat label="Queued" value={String(experiment.counts.queued)} /><Stat label="Active" value={String(experiment.counts.active)} /><Stat label="Finalizing" value={String(experiment.counts.finalizing)} /><Stat label="Finished" value={`${experiment.counts.finished}/${experiment.counts.total}`} /><Stat label="Archive" value={`${experiment.archiveFreshness}/${experiment.archiveIntegrity}`} /></div>{experiment.recoveryNotice ? <div className="mpk-alert" role="status"><strong>RECOVERING</strong>{experiment.recoveryNotice}</div> : null}<div className="mpk-run-grid">{experiment.runs.map(run => <RunCard key={run.runId} run={run} experiment={experiment} events={snapshot.events} selected={compare} onToggleCompare={toggleCompare} controller={controller} />)}</div>{comparison.length > 0 ? <section className="mpk-card"><h2 className="mpk-section-title">原始结果双栏对照 <span className="mpk-pill">不评分 · 不排序</span></h2><div className="mpk-compare">{comparison.map(item => <div className="mpk-compare-pane" key={item.attempt.attemptId}><div className="mpk-model-name" style={{ marginBottom: 8 }}>{item.run.modelConfig.modelName} · Attempt {item.attempt.attemptNo}</div><div className="mpk-output">{(item.attempt.finalResponse ?? item.attempt.outputPreview) || '暂无输出'}</div></div>)}{comparison.length === 1 ? <div className="mpk-empty">再选择一路 Attempt 进行双栏对照</div> : null}</div></section> : null}</div></section>
+  return <section className="mpk-page"><div className="mpk-titlebar"><div><div className="mpk-kicker">{lifecycleLabel(experiment.lifecycleState)} · {outcomeLabel(experiment.outcome)}</div><h1>{experiment.name}</h1><p>{experiment.experimentId} · 最后事件 {experiment.latestCursor}</p></div><div className="mpk-actions"><button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.openFolder(experiment.experimentId) }}>打开文件夹</button>{experiment.lifecycleState === 'ACTIVE' ? <button className="mpk-btn mpk-btn-danger" type="button" onClick={() => { if (confirm('停止当前实验的全部可取消执行？')) void controller.stopAll() }}>全部停止</button> : null}{hasRetryableFailure ? <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.retryFailed() }}>重试失败项</button> : null}</div></div><div className="mpk-stack"><div className="mpk-summary-grid"><Stat label="排队" value={String(experiment.counts.queued)} /><Stat label="执行中" value={String(experiment.counts.active)} /><Stat label="收尾中" value={String(experiment.counts.finalizing)} /><Stat label="已完成" value={`${experiment.counts.finished}/${experiment.counts.total}`} /><Stat label="归档" value={archiveLabel(experiment.archiveFreshness, experiment.archiveIntegrity)} /></div>{experiment.recoveryNotice ? <div className="mpk-alert" role="status"><strong>正在恢复</strong>{experiment.recoveryNotice}</div> : null}<div className="mpk-run-grid">{experiment.runs.map(run => <RunCard key={run.runId} run={run} experiment={experiment} events={snapshot.events} selected={compare} onToggleCompare={toggleCompare} controller={controller} />)}</div>{comparison.length > 0 ? <section className="mpk-card"><h2 className="mpk-section-title">原始结果双栏对照 <span className="mpk-pill">不评分 · 不排序</span></h2><div className="mpk-compare">{comparison.map(item => <div className="mpk-compare-pane" key={item.attempt.attemptId}><div className="mpk-model-name" style={{ marginBottom: 8 }}>{item.run.modelConfig.modelName} · Attempt {item.attempt.attemptNo}</div><div className="mpk-output">{(item.attempt.finalResponse ?? item.attempt.outputPreview) || '暂无输出'}</div></div>)}{comparison.length === 1 ? <div className="mpk-empty">再选择一路 Attempt 进行双栏对照</div> : null}</div></section> : null}</div></section>
 }
 
 function RunCard(props: { run: Run; experiment: ExperimentProjection; events: UiSnapshot['events']; selected: readonly string[]; onToggleCompare(id: string): void; controller: ModelPkUiController }): JSX.Element {
   const latest = props.run.attempts.find(attempt => attempt.attemptId === props.run.latestAttemptId)!
-  const runEvents = props.events.filter(event => event.attemptId !== null && props.run.attempts.some(attempt => attempt.attemptId === event.attemptId)).slice(-100)
+  const allRunEvents = props.events.filter(event => event.attemptId !== null && props.run.attempts.some(attempt => attempt.attemptId === event.attemptId))
+  const runEvents = allRunEvents.slice(-100)
   const cancellable = ['QUEUED', 'PREPARING', 'DISPATCHING', 'RUNNING', 'RECOVERING'].includes(latest.state)
   const retryable = ['TIMED_OUT', 'STALLED', 'DISCONNECTED'].includes(latest.state) || latest.state === 'FAILED' && (latest.error?.retryable ?? false)
-  return <article className="mpk-card mpk-run"><div className="mpk-run-head"><div><div className="mpk-kicker">Run {props.run.ordinal + 1}</div><h2>{props.run.modelConfig.modelName}</h2><div className="mpk-model-sub">{props.run.modelConfig.providerRoute} · {props.run.modelConfig.protocol}</div></div><span className={`mpk-pill ${stateClass(latest.state)}`}>{latest.state}</span></div><div className="mpk-output" aria-label={`${props.run.modelConfig.modelName} 原始输出`}>{(latest.finalResponse ?? latest.outputPreview) || '等待输出…'}</div><div className="mpk-actions"><label className="mpk-inline-label"><input type="checkbox" checked={props.selected.includes(latest.attemptId)} onChange={() => props.onToggleCompare(latest.attemptId)} />加入对照</label><span className="mpk-space" />{cancellable ? <button className="mpk-btn mpk-btn-danger mpk-btn-small" type="button" onClick={() => { void props.controller.stopAttempt(latest.attemptId, latest.lifecycleVersion) }}>Stop</button> : null}{retryable ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.retry(props.run.runId, latest.attemptId) }}>Retry</button> : null}{latest.state === 'SUCCEEDED' ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.runAgain(props.run.runId, latest.attemptId) }}>Run Again</button> : null}</div><details><summary className="mpk-section-title">Attempt 历史 ({props.run.attempts.length})</summary><div className="mpk-history">{[...props.run.attempts].reverse().map(attempt => <div className="mpk-history-row" key={attempt.attemptId}><input aria-label={`选择 Attempt ${attempt.attemptNo} 对照`} type="checkbox" checked={props.selected.includes(attempt.attemptId)} onChange={() => props.onToggleCompare(attempt.attemptId)} /><span>#{attempt.attemptNo} · {attempt.trigger} · {attempt.state}<span className="mpk-meta" style={{ display: 'block' }}>{attempt.finalizedAt ?? attempt.queuedAt}</span></span><span className={`mpk-pill ${attempt.archiveCompleteness === 'COMPLETE' ? 'mpk-pill-ready' : 'mpk-pill-warning'}`}>{attempt.archiveCompleteness}</span></div>)}</div></details><details><summary className="mpk-section-title">日志与事件 ({runEvents.length})</summary><div className="mpk-event-list">{runEvents.map(event => <div className="mpk-event" key={event.cursor}><span>#{event.cursor}</span><span>{event.kind}</span></div>)}</div></details><details><summary className="mpk-section-title">产物与诊断</summary><pre className="mpk-mono">{JSON.stringify({ archiveCompleteness: latest.archiveCompleteness, workspaceSealState: latest.workspaceSealState, error: latest.error, archiveError: latest.archiveError, providerRequestId: latest.providerRequestId, fingerprints: { input: latest.inputFingerprint, effectiveInput: latest.effectiveInputHash, harness: latest.resolvedHarnessFingerprint } }, null, 2)}</pre></details></article>
+  return <article className="mpk-card mpk-run"><div className="mpk-run-head"><div><div className="mpk-kicker">第 {props.run.ordinal + 1} 路</div><h2>{props.run.modelConfig.modelName}</h2><div className="mpk-model-sub">{props.run.modelConfig.providerRoute} · {props.run.modelConfig.protocol}</div></div><span className={`mpk-pill ${stateClass(latest.state)}`}>{attemptStateLabel(latest.state)}</span></div><div className="mpk-output" aria-label={`${props.run.modelConfig.modelName} 原始输出`}>{(latest.finalResponse ?? latest.outputPreview) || '等待输出…'}</div><div className="mpk-actions"><label className="mpk-inline-label"><input type="checkbox" checked={props.selected.includes(latest.attemptId)} onChange={() => props.onToggleCompare(latest.attemptId)} />加入对照</label><span className="mpk-space" />{cancellable ? <button className="mpk-btn mpk-btn-danger mpk-btn-small" type="button" onClick={() => { void props.controller.stopAttempt(latest.attemptId, latest.lifecycleVersion) }}>停止</button> : null}{retryable ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.retry(props.run.runId, latest.attemptId) }}>重试</button> : null}{['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'STALLED', 'DISCONNECTED', 'CANCELLED'].includes(latest.state) ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.openResult(latest.attemptId) }}>打开结果目录</button> : null}{latest.state === 'SUCCEEDED' ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.runAgain(props.run.runId, latest.attemptId) }}>再跑一次</button> : null}</div><details><summary className="mpk-section-title">执行历史 ({props.run.attempts.length})</summary><div className="mpk-history">{[...props.run.attempts].reverse().map(attempt => <div className="mpk-history-row" key={attempt.attemptId}><input aria-label={`选择第 ${attempt.attemptNo} 次执行对照`} type="checkbox" checked={props.selected.includes(attempt.attemptId)} onChange={() => props.onToggleCompare(attempt.attemptId)} /><span>#{attempt.attemptNo} · {triggerLabel(attempt.trigger)} · {attemptStateLabel(attempt.state)}<span className="mpk-meta" style={{ display: 'block' }}>{attempt.finalizedAt ?? attempt.queuedAt}</span></span><span className={`mpk-pill ${attempt.archiveCompleteness === 'COMPLETE' ? 'mpk-pill-ready' : 'mpk-pill-warning'}`}>{archiveCompletenessLabel(attempt.archiveCompleteness)}</span></div>)}</div></details><details><summary className="mpk-section-title">日志与事件（最近 {runEvents.length} 条{allRunEvents.length > runEvents.length ? ` / 共 ${allRunEvents.length}` : ''}）</summary><p className="mpk-meta">界面只展示最近 100 条。完整记录在实验目录的 events.jsonl。</p><div className="mpk-event-list">{runEvents.map(event => <div className="mpk-event" key={event.cursor}><span>#{event.cursor}</span><span>{eventKindLabel(event.kind)}</span></div>)}</div></details><details><summary className="mpk-section-title">产物与诊断</summary><p className="mpk-meta">该次执行的全部产物都在结果目录里，不一定只有一个文件。</p><pre className="mpk-mono">{JSON.stringify({ archiveCompleteness: latest.archiveCompleteness, workspaceSealState: latest.workspaceSealState, error: latest.error, archiveError: latest.archiveError, providerRequestId: latest.providerRequestId, fingerprints: { input: latest.inputFingerprint, effectiveInput: latest.effectiveInputHash, harness: latest.resolvedHarnessFingerprint } }, null, 2)}</pre></details></article>
 }
 
 function StoragePage({ snapshot, controller }: { snapshot: UiSnapshot; controller: ModelPkUiController }): JSX.Element {
@@ -444,15 +453,68 @@ function Loading({ label }: { label: string }): JSX.Element {
   return <div className="mpk-empty" role="status">{label}</div>
 }
 
-function modalityRows(check: { readonly diagnostics?: Readonly<Record<string, unknown>> }): readonly { readonly model: string; readonly reason: string }[] {
-  const rows = check.diagnostics?.unverifiedModels
-  if (!Array.isArray(rows)) return []
-  return rows.flatMap(row => {
-    if (typeof row !== 'object' || row === null) return []
-    const model = (row as { model?: unknown }).model
-    const reason = (row as { reason?: unknown }).reason
-    return typeof model === 'string' && typeof reason === 'string' ? [{ model, reason }] : []
-  })
+function lifecycleLabel(state: ExperimentProjection['lifecycleState']): string {
+  return { STARTING: '启动中', ACTIVE: '进行中', START_FAILED: '启动失败', SETTLED: '已结束' }[state]
+}
+
+function outcomeLabel(outcome: ExperimentProjection['outcome']): string {
+  if (outcome === null) return '进行中'
+  return { ALL_SUCCEEDED: '全部成功', PARTIAL_SUCCESS: '部分成功', NONE_SUCCEEDED: '全部失败', ALL_CANCELLED: '全部取消' }[outcome]
+}
+
+function archiveLabel(freshness: ExperimentProjection['archiveFreshness'], integrity: ExperimentProjection['archiveIntegrity']): string {
+  const freshnessText = freshness === 'CURRENT' ? '最新' : '过期'
+  const integrityText = integrity === 'COMPLETE' ? '完整' : integrity === 'PARTIAL' ? '部分完整' : '不完整'
+  return `${freshnessText} / ${integrityText}`
+}
+
+function archiveCompletenessLabel(value: Attempt['archiveCompleteness']): string {
+  return value === 'COMPLETE' ? '完整' : value === 'PARTIAL' ? '部分完整' : '不完整'
+}
+
+function attemptStateLabel(state: Attempt['state']): string {
+  return {
+    QUEUED: '排队', PREPARING: '准备中', DISPATCHING: '派发中', RUNNING: '执行中', RECOVERING: '恢复中',
+    CANCELLING: '取消中', FINALIZING: '收尾中', SUCCEEDED: '成功', FAILED: '失败', TIMED_OUT: '超时',
+    STALLED: '停滞', DISCONNECTED: '断线', CANCELLED: '已取消',
+  }[state]
+}
+
+function triggerLabel(trigger: Attempt['trigger']): string {
+  return { INITIAL: '首次', RETRY: '重试', RUN_AGAIN: '再跑', RETRY_FAILED: '批量重试' }[trigger]
+}
+
+function eventKindLabel(kind: string): string {
+  return {
+    ATTEMPT_RUNTIME_EVENT: '运行事件',
+    ATTEMPT_OUTPUT_DELTA: '输出增量',
+    ATTEMPT_STATE_CHANGED: '状态变化',
+    ATTEMPT_FINALIZED: '执行完成',
+    DISPATCH_INTENT_RECORDED: '记录派发',
+    DISPATCH_ACK_RECORDED: '派发确认',
+  }[kind] ?? kind
+}
+
+function checkTable(check: { readonly id: string; readonly diagnostics?: Readonly<Record<string, unknown>>; readonly error?: { readonly details?: Readonly<Record<string, unknown>> } }): { readonly headers: readonly string[]; readonly rows: readonly (readonly string[])[] } {
+  if (check.id === 'modalities') {
+    const rows = asObjectRows(check.diagnostics?.unverifiedModels)
+    return {
+      headers: ['模型', '原因'],
+      rows: rows.flatMap(row => typeof row.model === 'string' && typeof row.reason === 'string' ? [[row.model, row.reason]] : []),
+    }
+  }
+  if (check.id === 'models') {
+    const rows = asObjectRows(check.diagnostics?.models ?? check.error?.details?.models)
+    return {
+      headers: ['模型', 'ID'],
+      rows: rows.flatMap(row => typeof row.model === 'string' && typeof row.detail === 'string' ? [[row.model, row.detail]] : []),
+    }
+  }
+  return { headers: [], rows: [] }
+}
+
+function asObjectRows(value: unknown): readonly Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null) : []
 }
 
 function checkBadge(check: { readonly id: string; readonly status: string }, confirmed: boolean): { readonly label: string; readonly tone: string } {

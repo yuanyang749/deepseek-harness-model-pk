@@ -67,7 +67,7 @@ describe('formal product UI', () => {
     expect(screen.getByRole('button', { name: '预检并继续' })).toBeDisabled()
     fireEvent.click(screen.getByRole('checkbox', { name: /Model 2/u }))
     expect(screen.getByRole('combobox', { name: '并发数' })).toHaveValue('2')
-    expect(screen.getByRole('button', { name: '预检并继续' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '预检并继续' })).toBeDisabled()
   })
 
   it('shows a thumbnail after an image is uploaded', async () => {

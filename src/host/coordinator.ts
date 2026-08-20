@@ -319,11 +319,33 @@ export class Coordinator {
     if (rel === '..' || rel.startsWith(`..${sep}`)) fail('ARCHIVE_PATH_ESCAPE', 'open-folder', '实验目录路径无效', `path outside data root: ${actual}`)
     const info = await lstat(actual)
     if (!info.isDirectory() || info.isSymbolicLink()) fail('ARCHIVE_PATH_ESCAPE', 'open-folder', '实验目录路径无效', `not a regular directory: ${actual}`)
-    await new Promise<void>((resolvePromise, rejectPromise) => {
-      const child = spawn('/usr/bin/open', [actual], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin' } })
-      child.once('error', rejectPromise)
-      child.once('close', code => code === 0 ? resolvePromise() : rejectPromise(new Error(`open exited ${code}`)))
-    })
+    await openInFinder(actual)
+    return { opened: true }
+  }
+
+  async chooseBaselineFolder(): Promise<{ path: string | null }> {
+    return chooseFolder()
+  }
+
+  async openResult(experimentId: UUID, attemptId: UUID): Promise<{ opened: true }> {
+    const experiment = this.store.getExperimentRequired(experimentId)
+    const attempt = experiment.runs.flatMap(run => run.attempts).find(item => item.attemptId === attemptId)
+    const run = experiment.runs.find(item => item.attempts.some(candidate => candidate.attemptId === attemptId))
+    if (attempt === undefined || run === undefined) fail('NOT_FOUND', 'open-result', '执行记录不存在', `attempt missing ${attemptId}`)
+    const registered = resolve(
+      experiment.experimentPath,
+      'runs',
+      run.runId,
+      'attempts',
+      `${String(attempt.attemptNo).padStart(3, '0')}-${attempt.attemptId}`,
+    )
+    const actual = await realpath(registered)
+    const root = await realpath(this.archive.layout.experiments)
+    const rel = relative(root, actual)
+    if (rel === '..' || rel.startsWith(`..${sep}`)) fail('ARCHIVE_PATH_ESCAPE', 'open-result', '结果目录路径无效', `path outside data root: ${actual}`)
+    const info = await lstat(actual)
+    if (!info.isDirectory() || info.isSymbolicLink()) fail('ARCHIVE_PATH_ESCAPE', 'open-result', '结果目录路径无效', `not a regular directory: ${actual}`)
+    await openInFinder(actual)
     return { opened: true }
   }
 
@@ -478,4 +500,95 @@ class EventWaiter {
 function stringResult(action: DurableAction, key: string): string | null {
   const value = action.result?.[key]
   return typeof value === 'string' ? value : null
+}
+
+function openInFinder(target: string): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = process.platform === 'win32'
+      ? spawn('explorer.exe', [target], { stdio: 'ignore', windowsHide: true })
+      : process.platform === 'darwin'
+        ? spawn('/usr/bin/open', [target], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin' } })
+        : null
+    if (child === null) {
+      rejectPromise(new Error(`打开目录仅支持 macOS 和 Windows，当前是 ${process.platform}`))
+      return
+    }
+    child.once('error', rejectPromise)
+    child.once('close', code => {
+      if (code === 0 || process.platform === 'win32' && (code === 1 || code === null)) {
+        resolvePromise()
+        return
+      }
+      rejectPromise(new Error(`open exited ${code}`))
+    })
+  })
+}
+
+function chooseFolder(): Promise<{ path: string | null }> {
+  if (process.platform === 'darwin') return chooseFolderMac()
+  if (process.platform === 'win32') return chooseFolderWindows()
+  return Promise.reject(new Error(`选择目录仅支持 macOS 和 Windows，当前是 ${process.platform}`))
+}
+
+function chooseFolderMac(): Promise<{ path: string | null }> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn('/usr/bin/osascript', ['-e', 'POSIX path of (choose folder with prompt "选择项目起始目录")'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { PATH: '/usr/bin:/bin' },
+    })
+    collectProcess(child, (code, stdout, stderr) => {
+      if (code === 0) {
+        const path = stdout.trim().replace(/\/$/u, '')
+        resolvePromise({ path: path.length === 0 ? null : path })
+        return
+      }
+      if (stderr.includes('User canceled') || stderr.includes('-128')) {
+        resolvePromise({ path: null })
+        return
+      }
+      rejectPromise(new Error(stderr.trim() || `osascript exited ${code}`))
+    }, rejectPromise)
+  })
+}
+
+function chooseFolderWindows(): Promise<{ path: string | null }> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const script = [
+      'Add-Type -AssemblyName System.Windows.Forms',
+      '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
+      '$dialog.Description = "选择项目起始目录"',
+      '$dialog.ShowNewFolderButton = $true',
+      'if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 2 }',
+      'Write-Output $dialog.SelectedPath',
+    ].join('; ')
+    const child = spawn('powershell.exe', ['-NoProfile', '-STA', '-Command', script], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    collectProcess(child, (code, stdout, stderr) => {
+      if (code === 0) {
+        const path = stdout.trim().replace(/[\\/]+$/u, '')
+        resolvePromise({ path: path.length === 0 ? null : path })
+        return
+      }
+      if (code === 2) {
+        resolvePromise({ path: null })
+        return
+      }
+      rejectPromise(new Error(stderr.trim() || `powershell exited ${code}`))
+    }, rejectPromise)
+  })
+}
+
+function collectProcess(
+  child: ReturnType<typeof spawn>,
+  finish: (code: number | null, stdout: string, stderr: string) => void,
+  fail: (error: Error) => void,
+): void {
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.on('data', chunk => { stdout += String(chunk) })
+  child.stderr?.on('data', chunk => { stderr += String(chunk) })
+  child.once('error', fail)
+  child.once('close', code => finish(code, stdout, stderr))
 }

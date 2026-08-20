@@ -48,11 +48,12 @@ export class PreflightService {
       try {
         const diagnostics = await operation()
         const warning = typeof diagnostics?.warning === 'string' ? diagnostics.warning : undefined
+        const summary = typeof diagnostics?.summary === 'string' ? diagnostics.summary : warning ?? '通过'
         checks.push({
           id,
           label,
           status: warning === undefined ? 'PASS' : 'WARNING',
-          summary: warning ?? '通过',
+          summary,
           ...(diagnostics === undefined ? {} : { diagnostics }),
         })
       } catch (error) {
@@ -81,25 +82,29 @@ export class PreflightService {
     await addCheck('baseline', 'Baseline 快照', () => this.verifyBaseline(draft))
     const snapshots: ModelConfigSnapshot[] = []
     await this.models.list()
-    for (const modelConfigId of draft.selectedModelConfigIds) {
-      await addCheck(`model:${modelConfigId}`, '模型配置', async () => {
-        const snapshot = await this.models.snapshot(modelConfigId)
-        snapshots.push(snapshot)
-        return {
-          providerRoute: snapshot.providerRoute,
-          modelId: snapshot.modelId,
-          adapterPackage: snapshot.adapterPackage,
-          adapterVersion: snapshot.adapterVersion,
-          protocol: snapshot.protocol,
-          contextWindow: snapshot.contextWindow,
-          outputTokenCapacity: snapshot.outputTokenCapacity,
-          maxOutputTokens: snapshot.maxOutputTokens,
-          revision: snapshot.revision,
-          serializerDependencies: snapshot.serializerDependencies,
-          fingerprint: snapshot.fingerprint,
+    await addCheck('models', '模型配置', async () => {
+      const rows: Array<{ readonly model: string; readonly status: 'ok' | 'blocked'; readonly detail: string }> = []
+      for (const modelConfigId of draft.selectedModelConfigIds) {
+        try {
+          const snapshot = await this.models.snapshot(modelConfigId)
+          snapshots.push(snapshot)
+          rows.push({ model: snapshot.modelName, status: 'ok', detail: snapshot.modelId })
+        } catch (error) {
+          const detail = error instanceof ModelPkException ? error.detail : normalizeError(error, 'preflight:models')
+          rows.push({ model: modelConfigId, status: 'blocked', detail: detail.userMessage })
         }
-      })
-    }
+      }
+      if (rows.some(row => row.status === 'blocked')) {
+        throw new ModelPkException(modelPkError(
+          'MODEL_CONFIG_NOT_FOUND',
+          'preflight',
+          rows.filter(row => row.status === 'blocked').map(row => `${row.model}：${row.detail}`).join('；'),
+          'one or more model snapshots failed',
+          { details: { models: rows } },
+        ))
+      }
+      return { summary: `已核对 ${rows.length} 个模型`, models: rows }
+    })
     await addCheck('modalities', '公共输入模态', async () => {
       if (draft.attachments.length === 0) return { images: 0 }
       if (snapshots.length !== draft.selectedModelConfigIds.length) throw new Error('not every model has a valid snapshot')
@@ -156,12 +161,6 @@ export class PreflightService {
         throw new ModelPkException(modelPkError('CONTROL_STORE_CAPACITY_UNAVAILABLE', 'preflight', '控制存储预留容量不足', `required=${draft.selectedModelConfigIds.length}; free=${free}`))
       }
       return { freeSlots: free, requiredSlots: draft.selectedModelConfigIds.length }
-    })
-    checks.push({
-      id: 'provider-health',
-      label: 'Provider 实时可用性',
-      status: 'PASS',
-      summary: '开跑前不会探测密钥或线路；失败会在对应模型那一路单独报出，不影响其他模型。',
     })
     const taskPackage = createTaskPackage(draft)
     const taskPackageHash = hashCanonical(taskPackage)
@@ -254,7 +253,9 @@ export class PreflightService {
   }
 
   private async verifyBaseline(draft: Draft): Promise<Readonly<Record<string, unknown>>> {
-    if (draft.baseline === null) return { empty: true }
+    if (draft.baseline === null) {
+      throw new ModelPkException(modelPkError('WORKSPACE_NOT_READABLE', 'preflight', '请先指定项目起始目录', 'baseline is required'))
+    }
     const manifestBytes = await readFile(draft.baseline.manifestPath)
     const manifest = JSON.parse(manifestBytes.toString('utf8')) as { treeHash?: unknown; fileCount?: unknown; byteLength?: unknown }
     if (manifest.treeHash !== draft.baseline.objectHash || manifest.fileCount !== draft.baseline.fileCount
@@ -268,7 +269,15 @@ export class PreflightService {
     } finally {
       await rm(verifyPath, { recursive: true, force: true })
     }
-    return { treeHash: draft.baseline.objectHash, files: draft.baseline.fileCount, bytes: draft.baseline.byteLength }
+    return {
+      summary: draft.baseline.fileCount === 0
+        ? '全新项目对照：空白起始目录已冻结，各模型将从零生成。'
+        : `已有项目对照：已冻结 ${draft.baseline.fileCount.toLocaleString()} 个文件。`,
+      kind: draft.baseline.fileCount === 0 ? 'new-project' : 'existing-project',
+      treeHash: draft.baseline.objectHash,
+      files: draft.baseline.fileCount,
+      bytes: draft.baseline.byteLength,
+    }
   }
 }
 

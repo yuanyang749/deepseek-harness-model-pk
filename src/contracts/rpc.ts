@@ -12,6 +12,7 @@ export const RPC_ENDPOINTS = Object.freeze({
   attachmentCommit: 'v1/draft/attachment/commit',
   attachmentRemove: 'v1/draft/attachment/remove',
   baselineSelect: 'v1/draft/baseline/select',
+  baselineChooseFolder: 'v1/draft/baseline/choose-folder',
   baselineClear: 'v1/draft/baseline/clear',
   preflightRun: 'v1/preflight/run',
   preflightConfirm: 'v1/preflight/confirm-warning',
@@ -22,6 +23,7 @@ export const RPC_ENDPOINTS = Object.freeze({
   runAgain: 'v1/run/run-again',
   experimentRetryFailed: 'v1/experiment/retry-failed',
   experimentOpenFolder: 'v1/experiment/open-folder',
+  attemptOpenResult: 'v1/attempt/open-result',
   experimentDelete: 'v1/experiment/delete',
 } as const)
 

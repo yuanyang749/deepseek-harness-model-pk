@@ -190,6 +190,16 @@ export class ModelPkUiController {
     })
   }
 
+  async chooseBaselineFolder(): Promise<string | null> {
+    try {
+      const result = await this.api.native<{ path: string | null }>(RPC_ENDPOINTS.baselineChooseFolder, {})
+      return result.path
+    } catch (error) {
+      this.patch({ error: clientError(error, 'client') })
+      return null
+    }
+  }
+
   async selectBaseline(sourcePath: string): Promise<void> {
     await this.run('正在复制项目起始快照…', async () => {
       const draft = this.requiredDraft()
@@ -281,6 +291,14 @@ export class ModelPkUiController {
 
   async openFolder(experimentId: string): Promise<void> {
     await this.run('正在打开归档目录…', () => this.api.native(RPC_ENDPOINTS.experimentOpenFolder, { experimentId }))
+  }
+
+  async openResult(attemptId: string): Promise<void> {
+    const experiment = this.requiredExperiment()
+    await this.run('正在打开结果目录…', () => this.api.native(RPC_ENDPOINTS.attemptOpenResult, {
+      experimentId: experiment.experimentId,
+      attemptId,
+    }))
   }
 
   async loadStorage(): Promise<void> {

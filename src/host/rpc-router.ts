@@ -121,8 +121,17 @@ export function createNativeRpcHandler(services: RpcServices): (
   payload: unknown,
 ) => Promise<HostRpcResult> {
   return async (endpoint, payload) => safeRpc(endpoint, async () => {
-    if (endpoint !== RPC_ENDPOINTS.experimentOpenFolder) throw new Error(`unsupported native endpoint: ${endpoint}`)
-    return services.coordinator.openFolder(idObject(payload, 'experimentId').experimentId)
+    if (endpoint === RPC_ENDPOINTS.experimentOpenFolder) {
+      return services.coordinator.openFolder(idObject(payload, 'experimentId').experimentId)
+    }
+    if (endpoint === RPC_ENDPOINTS.attemptOpenResult) {
+      const request = parseOpenResult(payload)
+      return services.coordinator.openResult(request.experimentId, request.attemptId)
+    }
+    if (endpoint === RPC_ENDPOINTS.baselineChooseFolder) {
+      return services.coordinator.chooseBaselineFolder()
+    }
+    throw new Error(`unsupported native endpoint: ${endpoint}`)
   })
 }
 
@@ -267,6 +276,12 @@ function parseEnvelope<T>(value: unknown, parseRequest: (value: unknown) => T): 
   assertRecord(value)
   assertNoUnknownKeys(value, ['operationId', 'request'])
   return { operationId: uuid(value, 'operationId'), request: parseRequest(value.request) }
+}
+
+function parseOpenResult(value: unknown): { experimentId: UUID; attemptId: UUID } {
+  assertRecord(value)
+  assertNoUnknownKeys(value, ['experimentId', 'attemptId'])
+  return { experimentId: uuid(value, 'experimentId'), attemptId: uuid(value, 'attemptId') }
 }
 
 function idObject<K extends string>(value: unknown, key: K): Record<K, UUID> {
