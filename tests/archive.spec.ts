@@ -50,14 +50,23 @@ describe('self-contained archive', () => {
     await archive.initialize()
     const experimentId = uuid()
     const experimentPath = archive.experimentPath(experimentId, 'Portable fixture', new Date('2026-08-18T00:00:00Z'))
-    const definition = createExperimentDefinition({
+    const resultRoot = join(root, 'user-results')
+    await mkdir(resultRoot)
+    const resultPath = join(resultRoot, 'Portable-fixture-20260818-000000')
+    const rawDefinition = createExperimentDefinition({
       preflight: fixturePreflight(),
       experimentId,
       experimentPath,
+      resultPath,
       firstQueueSeq: 1,
       now: '2026-08-18T00:00:00.000Z',
     })
+    const definition = {
+      ...rawDefinition,
+      experiment: { ...rawDefinition.experiment, resultPath },
+    }
     await archive.publishDefinition(definition.experiment, definition.runs)
+    expect(await realpath(resultPath)).toBe(resultPath)
 
     const archivedDefinition = JSON.parse(await readFile(join(experimentPath, 'experiment.json'), 'utf8')) as Record<string, unknown>
     expect(archivedDefinition.archiveRoot).toBe('.')
@@ -69,9 +78,14 @@ describe('self-contained archive', () => {
       const initial = run.attempts[0]!
       const runtime = await archive.createAttemptRuntime(definition.experiment, run, initial)
       await writeFile(join(runtime.workspace, `answer-${run.ordinal}.txt`), `workspace-${run.ordinal}\n`)
+      if (run.ordinal === 1) await writeFile(join(runtime.workspace, 'second.txt'), 'second file\n')
       await mkdir(join(runtime.artifacts, 'reports'), { recursive: true })
       await writeFile(join(runtime.artifacts, 'reports', 'result.json'), JSON.stringify({ ordinal: run.ordinal }))
       await archive.appendTranscript(runtime, { type: 'assistant/message', ordinal: run.ordinal })
+      await archive.appendTranscript(runtime, {
+        type: 'assistant/chunk',
+        data: { chunk: { type: 'usage', usage: { inputTokens: 100 + run.ordinal, outputTokens: 20, cacheReadTokens: 5 } } },
+      })
       await archive.appendLog(runtime, { level: 'info', message: 'fixture' })
       await archive.appendAttemptEvent(runtime, { kind: 'FIXTURE_PROGRESS' })
       const terminal: Attempt = {
@@ -110,7 +124,28 @@ describe('self-contained archive', () => {
       expect(finalized.completeness).toBe('COMPLETE')
       expect(finalized.workspaceTreeHash).toMatch(/^sha256:[0-9a-f]{64}$/u)
       expect(finalized.indexHash).toMatch(/^sha256:[0-9a-f]{64}$/u)
-      terminalRuns.push({ ...run, attempts: [terminal], lastSuccessfulAttemptId: terminal.attemptId })
+      expect(finalized.workspaceSummary).toMatchObject(run.ordinal === 0
+        ? { mode: 'TEXT_FILE', changedFileCount: 1, textFilePath: 'answer-0.txt', textContent: 'workspace-0\n' }
+        : { mode: 'ENGINEERING', changedFileCount: 2, addedFileCount: 2 })
+      expect(finalized.tokenUsage).toEqual({
+        requestCount: 1,
+        inputTokens: 100 + run.ordinal,
+        outputTokens: 20,
+        cacheReadTokens: 5,
+        cacheWriteTokens: 0,
+      })
+      expect(finalized.resultPath).toBe(join(
+        resultPath,
+        `${String(run.ordinal + 1).padStart(2, '0')}-${run.modelConfig.modelName}`,
+        'attempts',
+        `001-${initial.attemptId}`,
+        'result.md',
+      ))
+      terminalRuns.push({
+        ...run,
+        attempts: [{ ...terminal, workspaceSummary: finalized.workspaceSummary, tokenUsage: finalized.tokenUsage }],
+        lastSuccessfulAttemptId: terminal.attemptId,
+      })
     }
 
     const events: AuditEvent[] = terminalRuns.map((run, index) => ({
@@ -138,6 +173,28 @@ describe('self-contained archive', () => {
       recoveryNotice: null,
     }
     await archive.writeProjection(settled)
+    await archive.exportComparison(settled)
+    const comparisonReport = await readFile(join(resultPath, '对照结果.md'), 'utf8')
+    expect(comparisonReport).toContain('answer-0.txt')
+    expect(comparisonReport).toContain('workspace-0')
+    expect(comparisonReport).toContain('工程结果：2 个文件发生变化')
+    expect(await readFile(join(resultPath, '01-Model 1', 'result.md'), 'utf8')).toBe('workspace-0\n')
+    const exportedWorkspace = await archive.exportAttemptWorkspace(
+      settled,
+      terminalRuns[0]!,
+      terminalRuns[0]!.attempts[0]!,
+    )
+    expect(await readFile(join(exportedWorkspace.path, 'answer-0.txt'), 'utf8')).toBe('workspace-0\n')
+    await expect(archive.exportAttemptWorkspace(
+      settled,
+      terminalRuns[0]!,
+      terminalRuns[0]!.attempts[0]!,
+    )).rejects.toMatchObject({
+      detail: {
+        code: 'CONFLICT',
+        userMessage: '工作区导出目录已存在',
+      },
+    })
     await archive.writeAuditExport(settled, events)
     const seal = await archive.sealExperiment(settled, events)
     await archive.commitSeal(seal.sealPath, uuid(), seal.indexHash)

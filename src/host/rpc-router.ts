@@ -9,6 +9,7 @@ import type {
   Hash,
   OperationEnvelope,
   RetryRequest,
+  ResultRootSelectRequest,
   StartRequest,
   StopRequest,
   UUID,
@@ -81,6 +82,12 @@ export function createBusinessRpcHandler(services: RpcServices): (
         const request = revisionedObject(payload)
         return services.drafts.clearBaseline(request.draftId, request.expectedRevision)
       }
+      case RPC_ENDPOINTS.resultRootSelect:
+        return services.drafts.selectResultRoot(parseResultRootSelect(payload))
+      case RPC_ENDPOINTS.resultRootClear: {
+        const request = revisionedObject(payload)
+        return services.drafts.clearResultRoot(request.draftId, request.expectedRevision)
+      }
       case RPC_ENDPOINTS.preflightRun:
         return services.preflight.run(idObject(payload, 'draftId').draftId)
       case RPC_ENDPOINTS.preflightConfirm: {
@@ -128,8 +135,15 @@ export function createNativeRpcHandler(services: RpcServices): (
       const request = parseOpenResult(payload)
       return services.coordinator.openResult(request.experimentId, request.attemptId)
     }
+    if (endpoint === RPC_ENDPOINTS.attemptExportWorkspace) {
+      const request = parseOpenResult(payload)
+      return services.coordinator.exportAttemptWorkspace(request.experimentId, request.attemptId)
+    }
     if (endpoint === RPC_ENDPOINTS.baselineChooseFolder) {
       return services.coordinator.chooseBaselineFolder()
+    }
+    if (endpoint === RPC_ENDPOINTS.resultRootChooseFolder) {
+      return services.coordinator.chooseResultFolder()
     }
     throw new Error(`unsupported native endpoint: ${endpoint}`)
   })
@@ -220,6 +234,16 @@ function parseBaselineSelect(value: unknown): BaselineSelectRequest {
     draftId: uuid(value, 'draftId'),
     expectedRevision: requiredInteger(value, 'expectedRevision'),
     sourcePath: requiredString(value, 'sourcePath'),
+  }
+}
+
+function parseResultRootSelect(value: unknown): ResultRootSelectRequest {
+  assertRecord(value)
+  assertNoUnknownKeys(value, ['draftId', 'expectedRevision', 'rootPath'])
+  return {
+    draftId: uuid(value, 'draftId'),
+    expectedRevision: requiredInteger(value, 'expectedRevision'),
+    rootPath: requiredString(value, 'rootPath'),
   }
 }
 

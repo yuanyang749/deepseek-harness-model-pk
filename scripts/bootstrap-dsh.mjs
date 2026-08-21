@@ -1,27 +1,35 @@
 import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { nodeCliInvocation, packageManagerEntry } from './bootstrap-command.mjs'
 
 const root = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
+const require = createRequire(import.meta.url)
 const args = process.argv.slice(2)
 const profileIndex = args.indexOf('--profile')
 const profile = profileIndex >= 0 ? args[profileIndex + 1] : 'web'
 if (typeof profile !== 'string' || !/^[a-z0-9-]+$/u.test(profile)) throw new Error('invalid --profile value')
 const skipBuild = args.includes('--skip-build')
-const windows = process.platform === 'win32'
-const pnpm = windows ? 'pnpm.cmd' : 'pnpm'
-const dsh = join(root, 'node_modules', '.bin', windows ? 'dsh.cmd' : 'dsh')
-const commandOptions = { cwd: root, stdio: 'inherit', ...(windows ? { shell: true } : {}) }
+const dshPackage = require.resolve('@deepseek-ai/dsh/package.json')
+const dshEntry = join(dirname(dshPackage), 'lib', 'bin.js')
+const commandOptions = { cwd: root, stdio: 'inherit', windowsHide: true }
+
+function runNodeCli(entry, cliArgs, options = commandOptions) {
+  const invocation = nodeCliInvocation(process.execPath, entry, cliArgs)
+  return execFileSync(invocation.file, invocation.args, options)
+}
 
 if (!skipBuild) {
-  execFileSync(pnpm, ['build:native'], commandOptions)
-  execFileSync(pnpm, ['build'], commandOptions)
+  const pnpmEntry = packageManagerEntry(process.env.npm_execpath)
+  runNodeCli(pnpmEntry, ['build:native'])
+  runNodeCli(pnpmEntry, ['build'])
 }
-const version = execFileSync(dsh, ['--version'], { cwd: root, encoding: 'utf8', ...(windows ? { shell: true } : {}) }).trim()
+const version = runNodeCli(dshEntry, ['--version'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim()
 if (version !== '0.1.0-rc.7') throw new Error(`Model PK requires DSH 0.1.0-rc.7, found ${version}`)
-execFileSync(dsh, ['plugin', '--profile', profile, 'add', root], commandOptions)
+runNodeCli(dshEntry, ['plugin', '--profile', profile, 'add', root])
 
 console.log('')
 console.log(`Installed dsh-model-pk into DSH profile ${profile}.`)
-console.log(`Verify: ${dsh} --profile ${profile} --dump-config`)
-console.log(`Launch: ${dsh} --profile ${profile}`)
+console.log(`Verify: dsh --profile ${profile} --dump-config`)
+console.log(`Launch: dsh --profile ${profile}`)

@@ -22,7 +22,7 @@ import type { ArchiveManager } from './archive.js'
 import type { CompatibilityEvidence } from './compatibility.js'
 import type { DshHostContext } from './dsh.js'
 import { resolveHarness } from './harness.js'
-import type { ModelCatalog } from './model-catalog.js'
+import type { ImageCapability, ModelCatalog } from './model-catalog.js'
 import type { SandboxRunner } from '../native/sandbox.js'
 
 export class PreflightService {
@@ -79,7 +79,13 @@ export class PreflightService {
       return { nativeHelperHash: evidence.report.nativeHelper.hash, checks: evidence.checks }
     })
     await addCheck('attachments', '附件完整性', () => this.verifyAttachments(draft))
-    await addCheck('baseline', 'Baseline 快照', () => this.verifyBaseline(draft))
+    await addCheck('baseline', '起始工作区', () => this.verifyBaseline(draft))
+    await addCheck('result-root', '结果输出目录', async () => {
+      if (draft.resultRootPath === null) {
+        throw new ModelPkException(modelPkError('VALIDATION_ERROR', 'result-root', '请选择结果输出目录', 'result root is required'))
+      }
+      return { summary: '结果将导出到用户目录', rootPath: draft.resultRootPath }
+    })
     const snapshots: ModelConfigSnapshot[] = []
     await this.models.list()
     await addCheck('models', '模型配置', async () => {
@@ -108,22 +114,12 @@ export class PreflightService {
     await addCheck('modalities', '公共输入模态', async () => {
       if (draft.attachments.length === 0) return { images: 0 }
       if (snapshots.length !== draft.selectedModelConfigIds.length) throw new Error('not every model has a valid snapshot')
-      const unverified: Array<{ readonly model: string; readonly reason: string }> = []
       for (const snapshot of snapshots) {
         const capability = this.models.imageCapability(snapshot)
-        if (capability.status === 'declared') {
-          if (!this.models.isImagePathVerified(snapshot)) {
-            throw new ModelPkException(modelPkError('ATTACHMENT_TRANSFORM_UNVERIFIED', 'preflight', `${snapshot.modelName} 的图片无损路径尚未验证`, `protocol=${snapshot.protocol}`))
-          }
-          continue
+        assertImageInputSupported(snapshot, capability)
+        if (!this.models.isImagePathVerified(snapshot)) {
+          throw new ModelPkException(modelPkError('ATTACHMENT_TRANSFORM_UNVERIFIED', 'preflight', `${snapshot.modelName} 的图片无损路径尚未验证`, `protocol=${snapshot.protocol}`))
         }
-        if (capability.status === 'unsupported' && capability.source === 'deepseek-text-only') {
-          throw new ModelPkException(modelPkError('IMAGE_INPUT_UNSUPPORTED', 'preflight', `${snapshot.modelName} 不支持图片输入`, `model=${snapshot.modelConfigId}; source=${capability.source}`))
-        }
-        unverified.push({
-          model: snapshot.modelName,
-          reason: capability.source === 'pi-ai-catalog' ? 'pi-ai 目录未标注图片' : '自定义模型，目录未收录',
-        })
       }
       const limits = this.ctx.attachments?.imageLimits
       if (limits === undefined || this.ctx.attachments?.saveImages === undefined) {
@@ -142,10 +138,6 @@ export class PreflightService {
         images: draft.attachments.length,
         totalBytes: total,
         dshLimits: limits,
-        ...(unverified.length === 0 ? {} : {
-          warning: `${unverified.length} 个模型无法自动证明支持图片，需你确认后才能带着图片开跑。`,
-          unverifiedModels: unverified,
-        }),
       }
     })
     const harness = resolveHarness(this.sandbox)
@@ -180,6 +172,7 @@ export class PreflightService {
       modelFingerprints: snapshots.map(snapshot => snapshot.fingerprint),
       resolvedHarnessFingerprint: harness.fingerprint,
       executionConditionsHash,
+      resultRootPath: draft.resultRootPath,
       compatibilityHash: hashCanonical(this.compatibility().report),
     }
     const snapshotHash = hashCanonical(snapshotCore)
@@ -190,6 +183,7 @@ export class PreflightService {
       snapshotHash,
       status,
       checks,
+      resultRootPath: draft.resultRootPath,
       taskPackage,
       taskPackageHash,
       models: snapshots,
@@ -236,6 +230,9 @@ export class PreflightService {
     if (snapshot.models.length !== snapshot.taskPackage.selectedModelConfigIds.length) {
       throw new ModelPkException(modelPkError('MODEL_CONFIG_NOT_FOUND', 'start', '模型快照不完整', 'snapshot model count mismatch'))
     }
+    if (snapshot.resultRootPath === null) {
+      throw new ModelPkException(modelPkError('VALIDATION_ERROR', 'start', '请选择结果输出目录', 'start snapshot has no result root'))
+    }
     return snapshot
   }
 
@@ -254,7 +251,12 @@ export class PreflightService {
 
   private async verifyBaseline(draft: Draft): Promise<Readonly<Record<string, unknown>>> {
     if (draft.baseline === null) {
-      throw new ModelPkException(modelPkError('WORKSPACE_NOT_READABLE', 'preflight', '请先指定项目起始目录', 'baseline is required'))
+      return {
+        summary: '未指定起始项目，各模型将从内部空白工作区开始。',
+        kind: 'blank-workspace',
+        files: 0,
+        bytes: 0,
+      }
     }
     const manifestBytes = await readFile(draft.baseline.manifestPath)
     const manifest = JSON.parse(manifestBytes.toString('utf8')) as { treeHash?: unknown; fileCount?: unknown; byteLength?: unknown }
@@ -279,6 +281,19 @@ export class PreflightService {
       bytes: draft.baseline.byteLength,
     }
   }
+}
+
+export function assertImageInputSupported(snapshot: ModelConfigSnapshot, capability: ImageCapability): void {
+  if (capability.status === 'declared') return
+  const userMessage = capability.status === 'unverified'
+    ? `${snapshot.modelName} 未在 DSH 模型配置中声明图片能力；请为该模型设置 input: [text, image]`
+    : `${snapshot.modelName} 不支持图片输入`
+  throw new ModelPkException(modelPkError(
+    'IMAGE_INPUT_UNSUPPORTED',
+    'preflight',
+    userMessage,
+    `model=${snapshot.modelConfigId}; source=${capability.source}; modalities=${capability.modalities.join(',')}`,
+  ))
 }
 
 function createTaskPackage(draft: Draft): TaskPackage {

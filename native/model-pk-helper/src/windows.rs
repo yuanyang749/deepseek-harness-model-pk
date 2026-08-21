@@ -1741,8 +1741,8 @@ fn write_manifest(path: &Path, manifest: &TreeManifest) -> Result<()> {
 }
 
 fn move_replace(source: &Path, destination: &Path) -> Result<()> {
-    let source_w = wide_string(source.as_os_str());
-    let destination_w = wide_string(destination.as_os_str());
+    let source_w = wide_path(source);
+    let destination_w = wide_path(destination);
     if unsafe {
         MoveFileExW(
             source_w.as_ptr(),
@@ -1789,7 +1789,7 @@ fn reject_reparse_if_present(path: &Path) -> Result<()> {
 }
 
 fn reject_named_streams(path: &Path) -> Result<()> {
-    let wide = wide_string(path.as_os_str());
+    let wide = wide_path(path);
     let mut data = WIN32_FIND_STREAM_DATA::default();
     let handle = unsafe {
         FindFirstStreamW(
@@ -2109,6 +2109,13 @@ fn sandbox_profile_name(path: &Path) -> String {
 
 fn wide_string(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
+}
+
+fn wide_path(value: &Path) -> Vec<u16> {
+    let units = value.as_os_str().encode_wide().collect::<Vec<_>>();
+    let mut extended = extended_windows_path_units(&units);
+    extended.push(0);
+    extended
 }
 
 unsafe fn string_from_wide_ptr(value: *const u16) -> String {

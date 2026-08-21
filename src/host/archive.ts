@@ -8,6 +8,7 @@ import {
   open,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -20,12 +21,15 @@ import type {
   ExperimentProjection,
   Hash,
   ModelPkError,
+  ModelTokenUsage,
   Run,
+  WorkspaceSummary,
 } from '../contracts/types.js'
 import { canonicalize, hashCanonical, sha256Bytes, sha256File } from '../core/jcs.js'
 import { fail, normalizeError } from '../core/error.js'
 import { sanitizeFileName } from '../core/validation.js'
 import type { NativeHelper, NativeTreeManifest } from '../native/helper.js'
+import { buildWorkspaceSummary, summarizeTokenUsage } from './workspace-summary.js'
 
 export interface DataLayout {
   readonly root: string
@@ -64,6 +68,10 @@ export interface FinalizeArchiveResult {
   readonly workspaceTreeHash: Hash | null
   readonly indexHash: Hash | null
   readonly error: ModelPkError | null
+  readonly resultPath: string | null
+  readonly resultExportError: ModelPkError | null
+  readonly workspaceSummary: WorkspaceSummary | null
+  readonly tokenUsage: ModelTokenUsage | null
 }
 
 export function dataLayout(dshHome: string): DataLayout {
@@ -106,6 +114,28 @@ function isMissingPath(error: unknown): boolean {
     && (error as { readonly code?: unknown }).code === 'ENOENT'
 }
 
+function isAlreadyExists(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error
+    && (error as { readonly code?: unknown }).code === 'EEXIST'
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch (error) {
+    if (isMissingPath(error)) return false
+    throw error
+  }
+}
+
+function resultExportFailure(error: unknown, phase: string): ModelPkError {
+  const normalized = normalizeError(error, phase)
+  return normalized.code === 'DISK_FULL'
+    ? normalized
+    : { ...normalized, code: 'RESULT_EXPORT_FAILED', retryable: true }
+}
+
 export class ArchiveManager {
   constructor(readonly layout: DataLayout, private readonly helper: NativeHelper) {}
 
@@ -124,6 +154,11 @@ export class ArchiveManager {
       .replace(/^-+|-+$/gu, '')
     const slug = [...normalizedSlug].slice(0, 48).join('') || 'experiment'
     return join(this.layout.experiments, day, `${experimentId}-${slug}`)
+  }
+
+  resultPath(rootPath: string, experimentId: string, name: string, createdAt = new Date()): string {
+    const stamp = createdAt.toISOString().replace(/[-:]/gu, '').slice(0, 15).replace('T', '-')
+    return join(rootPath, `${safeName(name)}-${stamp}-${experimentId.slice(0, 8)}`)
   }
 
   draftPath(draftId: string): string {
@@ -231,6 +266,7 @@ export class ArchiveManager {
     }
     await publish('start.commit', commit)
     await fsyncDirectory(root)
+    await this.prepareResultDirectory(experiment, runs)
     return commit.definitionIndexHash
   }
 
@@ -325,7 +361,7 @@ export class ArchiveManager {
         const objectRoot = join(input.experiment.experimentPath, 'objects')
         await mkdir(objectRoot, { recursive: true, mode: 0o700 })
         const workspaceTemp = join(attemptRoot, `.workspace-manifest-${randomUUID()}.json`)
-        const workspaceSummary = await this.helper.snapshotTo(input.runtime.workspace, objectRoot, workspaceTemp, 20 * 1024 * 1024 * 1024, 1_000_000)
+        const workspaceSnapshotSummary = await this.helper.snapshotTo(input.runtime.workspace, objectRoot, workspaceTemp, 20 * 1024 * 1024 * 1024, 1_000_000)
         const workspaceBytes = await readFile(workspaceTemp)
         await rm(workspaceTemp, { force: true })
         workspaceManifest = JSON.parse(workspaceBytes.toString('utf8')) as NativeTreeManifest
@@ -335,11 +371,25 @@ export class ArchiveManager {
         const artifactBytes = await readFile(artifactTemp)
         await rm(artifactTemp, { force: true })
         await publish('artifacts/manifest.json', artifactBytes)
-        if (workspaceManifest.treeHash !== workspaceSummary.treeHash) throw new Error('workspace snapshot summary mismatch')
+        if (workspaceManifest.treeHash !== workspaceSnapshotSummary.treeHash) throw new Error('workspace snapshot summary mismatch')
       } else {
         for (const path of ['transcript.jsonl', 'logs.jsonl', 'events.jsonl', 'workspace-manifest.json', 'artifacts/manifest.json']) {
           entries.push({ path, hash: hashCanonical({ unavailable: true }), byteLength: 0, available: false, reason: 'runtime-not-materialized' })
         }
+      }
+      let workspaceSummary: WorkspaceSummary | null = null
+      let tokenUsage: ModelTokenUsage | null = null
+      if (input.runtime !== null && workspaceManifest !== null) {
+        const baselineManifest = JSON.parse(await readFile(
+          join(input.experiment.experimentPath, 'task', 'baseline', 'manifest.json'),
+          'utf8',
+        )) as NativeTreeManifest
+        workspaceSummary = await buildWorkspaceSummary(
+          baselineManifest,
+          workspaceManifest,
+          async path => Buffer.from((await this.helper.read(input.runtime!.workspace, path, 1024 * 1024 + 1)).bytesBase64, 'base64'),
+        )
+        tokenUsage = summarizeTokenUsage(await readFile(input.runtime.transcriptPath, 'utf8').catch(() => ''))
       }
       await publish('effective-input.redacted.json', {
         taskPackageHash: input.attempt.taskPackageHash,
@@ -365,6 +415,8 @@ export class ArchiveManager {
         archiveCompleteness: completeness,
         workspacePath: input.runtime === null ? null : '/workspace',
         artifactPath: input.runtime === null ? null : '/workspace/.model-pk-artifacts',
+        workspaceSummary,
+        tokenUsage,
         cancelReason: input.cancelReason,
       })
       entries.sort((left, right) => left.path.localeCompare(right.path))
@@ -379,18 +431,38 @@ export class ArchiveManager {
       }
       await publish('archive-index.json', index)
       await fsyncDirectory(attemptRoot)
+      let resultPath: string | null = null
+      let resultExportError: ModelPkError | null = null
+      try {
+        resultPath = await this.exportAttemptResult(input, workspaceSummary)
+      } catch (error) {
+        resultExportError = resultExportFailure(error, 'result-export')
+      }
       return {
         completeness,
         workspaceTreeHash: workspaceManifest?.treeHash ?? null,
         indexHash: await sha256File(join(attemptRoot, 'archive-index.json')),
         error: null,
+        resultPath,
+        resultExportError,
+        workspaceSummary,
+        tokenUsage,
       }
     } catch (error) {
       const normalized = normalizeError(error, 'archive-finalize')
       const archiveError = normalized.code === 'DISK_FULL'
         ? normalized
         : { ...normalized, code: 'ARCHIVE_WRITE_FAILED' as const, retryable: false }
-      return { completeness: 'INCOMPLETE', workspaceTreeHash: null, indexHash: null, error: archiveError }
+      return {
+        completeness: 'INCOMPLETE',
+        workspaceTreeHash: null,
+        indexHash: null,
+        error: archiveError,
+        resultPath: null,
+        resultExportError: null,
+        workspaceSummary: null,
+        tokenUsage: null,
+      }
     }
   }
 
@@ -416,6 +488,99 @@ export class ArchiveManager {
         derivedState: run.attempts.find(attempt => attempt.attemptId === run.latestAttemptId)?.state ?? 'NOT_STARTED',
       })),
     })}\n`, 'utf8'), 0o600)
+  }
+
+  async exportComparison(experiment: ExperimentProjection): Promise<{ path: string }> {
+    if (experiment.resultPath === null) fail('CONFLICT', 'result-export', '该实验没有配置结果输出目录')
+    const sections = experiment.runs.map(run => {
+      const attempt = run.attempts.find(item => item.attemptId === run.latestAttemptId)
+      return `## ${String(run.ordinal + 1).padStart(2, '0')} · ${run.modelConfig.modelName}\n\n${comparisonReportBody(attempt)}`
+    })
+    const path = join(experiment.resultPath, '对照结果.md')
+    await atomicWrite(path, Buffer.from(`# ${experiment.name}\n\n${sections.join('\n\n---\n\n')}\n`, 'utf8'), 0o600)
+    return { path }
+  }
+
+  async exportAttemptWorkspace(
+    experiment: ExperimentProjection,
+    run: Run,
+    attempt: Attempt,
+  ): Promise<{ path: string }> {
+    if (experiment.resultPath === null) fail('CONFLICT', 'workspace-export', '该实验没有配置结果输出目录')
+    const runRoot = this.runResultDirectory(experiment, run)
+    const target = join(runRoot, `workspace-attempt-${String(attempt.attemptNo).padStart(3, '0')}`)
+    if (await pathExists(target)) fail('CONFLICT', 'workspace-export', '工作区导出目录已存在', `target exists: ${target}`)
+    const temporary = join(runRoot, `.workspace-${attempt.attemptId}-${randomUUID()}.tmp`)
+    const archiveAttemptRoot = this.archiveAttemptDirectory(experiment, run, attempt)
+    try {
+      await this.helper.materialize(
+        join(archiveAttemptRoot, 'workspace-manifest.json'),
+        join(experiment.experimentPath, 'objects'),
+        temporary,
+      )
+      await rename(temporary, target)
+      return { path: target }
+    } catch (error) {
+      await rm(temporary, { recursive: true, force: true }).catch(() => undefined)
+      throw error
+    }
+  }
+
+  private async prepareResultDirectory(experiment: Experiment, runs: readonly Run[]): Promise<void> {
+    if (experiment.resultPath === null) return
+    const root = dirname(experiment.resultPath)
+    const actualRoot = await realpath(root)
+    if (actualRoot !== resolve(root)) fail('ARCHIVE_PATH_ESCAPE', 'result-export', '结果输出目录路径已变化', `expected=${root}; actual=${actualRoot}`)
+    try {
+      await mkdir(experiment.resultPath, { mode: 0o700 })
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error
+      const marker = await readFile(join(experiment.resultPath, '.model-pk-result.json'), 'utf8').catch(() => null)
+      if (marker === null || JSON.parse(marker).experimentId !== experiment.experimentId) {
+        fail('CONFLICT', 'result-export', '结果目录已存在且不属于当前实验', `result path collision: ${experiment.resultPath}`)
+      }
+    }
+    await atomicWrite(join(experiment.resultPath, '.model-pk-result.json'), Buffer.from(`${canonicalize({
+      schemaVersion: 'model-pk/user-result/v1',
+      experimentId: experiment.experimentId,
+      createdAt: experiment.createdAt,
+    })}\n`, 'utf8'), 0o600)
+    for (const run of runs) {
+      const runRoot = this.runResultDirectory(experiment, run)
+      await mkdir(join(runRoot, 'attempts'), { recursive: true, mode: 0o700 })
+    }
+  }
+
+  private async exportAttemptResult(input: FinalizeArchiveInput, workspaceSummary: WorkspaceSummary | null): Promise<string | null> {
+    const content = workspaceSummary?.mode === 'TEXT_FILE' && workspaceSummary.textContent !== null
+      ? workspaceSummary.textContent
+      : input.finalResponse
+    if (input.experiment.resultPath === null || content === null) return null
+    const runRoot = this.runResultDirectory(input.experiment, input.run)
+    const attemptRoot = join(
+      runRoot,
+      'attempts',
+      `${String(input.attempt.attemptNo).padStart(3, '0')}-${input.attempt.attemptId}`,
+    )
+    await mkdir(attemptRoot, { recursive: true, mode: 0o700 })
+    const resultPath = join(attemptRoot, 'result.md')
+    const bytes = Buffer.from(content, 'utf8')
+    await atomicWrite(resultPath, bytes, 0o600)
+    await atomicWrite(join(runRoot, 'result.md'), bytes, 0o600)
+    return resultPath
+  }
+
+  runResultDirectory(experiment: Experiment, run: Run): string {
+    if (experiment.resultPath === null) fail('CONFLICT', 'result-export', '该实验没有配置结果输出目录')
+    return join(experiment.resultPath, `${String(run.ordinal + 1).padStart(2, '0')}-${safeName(run.modelConfig.modelName)}`)
+  }
+
+  private archiveAttemptDirectory(experiment: Experiment, run: Run, attempt: Attempt): string {
+    return join(
+      experiment.experimentPath,
+      'runs', run.runId,
+      'attempts', `${String(attempt.attemptNo).padStart(3, '0')}-${attempt.attemptId}`,
+    )
   }
 
   async appendAuditExport(experiment: Experiment, event: AuditEvent): Promise<void> {
@@ -619,6 +784,29 @@ async function fsyncDirectory(path: string): Promise<void> {
   if (process.platform === 'win32') return
   const handle = await open(path, 'r')
   try { await handle.sync() } finally { await handle.close() }
+}
+
+function comparisonReportBody(attempt: Attempt | undefined): string {
+  if (attempt === undefined) return '没有可展示的结果。'
+  const summary = attempt.workspaceSummary
+  if (summary?.mode === 'TEXT_FILE' && summary.textFilePath !== null && summary.textContent !== null) {
+    return `单文件：\`${escapeMarkdownCode(summary.textFilePath)}\`\n\n${summary.textContent}`
+  }
+  if (summary?.mode === 'ENGINEERING') {
+    const files = summary.files.map(file => `- ${file.changeType} \`${escapeMarkdownCode(file.path)}\``).join('\n')
+    const truncated = summary.truncated ? '\n- …其余文件未列出' : ''
+    const response = attempt.finalResponse ?? attempt.outputPreview
+    return [
+      `工程结果：${summary.changedFileCount} 个文件发生变化（新增 ${summary.addedFileCount}、修改 ${summary.modifiedFileCount}、删除 ${summary.deletedFileCount}）`,
+      `${files}${truncated}`,
+      response.length === 0 ? '' : `模型说明：\n\n${response}`,
+    ].filter(section => section.length > 0).join('\n\n')
+  }
+  return attempt.finalResponse ?? attempt.outputPreview ?? '没有可展示的文本结果。'
+}
+
+function escapeMarkdownCode(value: string): string {
+  return value.replace(/`/gu, '\\`')
 }
 
 async function copyIfPresent(

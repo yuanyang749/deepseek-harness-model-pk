@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createAttempt, createExperimentDefinition } from '../src/domain/factory.js'
 import { hashCanonical } from '../src/core/jcs.js'
@@ -74,7 +75,45 @@ describe('ControlStore', () => {
     expect(settled.outcome).toBe('ALL_CANCELLED')
     expect(store.freeCapacitySlotCount()).toBe(12)
     expect(settled.latestCursor).toBeGreaterThan(0)
+
+    const nextDefinition = createExperimentDefinition({
+      preflight: fixturePreflight(),
+      experimentPath: join(roots[0]!, 'experiment-2'),
+      experimentId: uuid(),
+      firstQueueSeq: store.nextQueueSequence(),
+      now: '2026-08-18T00:02:00.000Z',
+    })
+    expect(store.createExperiment({
+      ...nextDefinition,
+      actionId: uuid(),
+      requestHash: hashCanonical({ start: 2 }),
+    }).state).toBe('APPLIED')
+    expect(store.freeCapacitySlotCount()).toBe(10)
     store.close()
+  })
+
+  it('migrates the v1 control-slot uniqueness constraint for existing databases', async () => {
+    const store = await createStore()
+    const databasePath = store.path
+    store.close()
+
+    const legacyDatabase = new DatabaseSync(databasePath)
+    legacyDatabase.exec('CREATE UNIQUE INDEX legacy_attempt_control_slot_unique ON attempts(control_slot_id)')
+    legacyDatabase.prepare('UPDATE meta SET value=? WHERE key=?').run('1', 'schema_version')
+    legacyDatabase.close()
+
+    const migrated = new ControlStore(databasePath)
+    const uniqueIndexes = migrated.db.prepare(`
+      SELECT name FROM pragma_index_list('attempts') WHERE "unique"=1
+    `).all() as { name: string }[]
+    const stillUnique = uniqueIndexes.some(index => {
+      const columns = migrated.db.prepare('SELECT name FROM pragma_index_info(?) ORDER BY seqno')
+        .all(index.name) as { name: string }[]
+      return columns.length === 1 && columns[0]?.name === 'control_slot_id'
+    })
+    expect(stillUnique).toBe(false)
+    expect(migrated.getMeta('schema_version')).toBe('2')
+    migrated.close()
   })
 
   it('enforces operation identity and only one nonterminal attempt per run', async () => {

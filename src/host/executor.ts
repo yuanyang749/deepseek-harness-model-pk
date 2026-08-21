@@ -664,7 +664,9 @@ function probeAttempt(): Attempt {
     executionLeaseId: randomUUID(), fencingToken: randomUUID(), executionTerminationConfirmed: false,
     executionReservationState: 'HELD', reservationAcquiredAt: now, reservationReleaseDeadline: now,
     orphanedExecution: false, orphanedAt: null, workspaceSealState: 'OPEN', workspacePath: null,
-    artifactPath: null, finalResponse: null, outputPreview: '', archiveCompleteness: 'INCOMPLETE',
+    artifactPath: null, resultPath: null, resultExportError: null,
+    workspaceSummary: null, tokenUsage: null,
+    finalResponse: null, outputPreview: '', archiveCompleteness: 'INCOMPLETE',
     error: null, archiveError: null, cancelReason: null, healthFlags: [],
   }
 }

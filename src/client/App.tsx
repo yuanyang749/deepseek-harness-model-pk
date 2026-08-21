@@ -135,8 +135,16 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
   })
   const [search, setSearch] = useState('')
   const [baselinePath, setBaselinePath] = useState('')
+  const [resultRootPath, setResultRootPath] = useState('')
   const [dragging, setDragging] = useState(false)
+  const [visionDialogOpen, setVisionDialogOpen] = useState(false)
+  const [visionSelection, setVisionSelection] = useState<string[]>([])
   const filtered = useMemo(() => snapshot.models.filter(model => `${model.displayName} ${model.providerDisplayName} ${model.modelId}`.toLowerCase().includes(search.toLowerCase())), [snapshot.models, search])
+  const configurableTextOnlyModels = useMemo(() => snapshot.models.filter(model => (
+    model.support === 'SUPPORTED'
+    && model.adapterKind === 'pi-ai'
+    && !model.inputModalities.includes('image')
+  )), [snapshot.models])
   const setField = <K extends keyof DraftForm>(key: K, value: DraftForm[K]): void => setForm(current => ({ ...current, [key]: value }))
   const persistedPatch = (): DraftUpdateRequest['patch'] => ({
     taskName: form.taskName,
@@ -147,7 +155,16 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
   })
   const persist = (): Promise<boolean> => controller.saveDraftSafely(persistedPatch())
   const preflight = async (): Promise<void> => {
-    if (await persist()) await controller.runPreflight()
+    if (!await persist()) return
+    if (controller.getSnapshot().draft?.resultRootPath === null) {
+      await controller.selectResultRoot(resultRootPath.trim())
+      if (controller.getSnapshot().draft?.resultRootPath === null) return
+    }
+    if (controller.getSnapshot().draft?.baseline === null && baselinePath.trim() !== '') {
+      await controller.selectBaseline(baselinePath.trim())
+      if (controller.getSnapshot().draft?.baseline === null) return
+    }
+    await controller.runPreflight()
   }
   const upload = async (files: readonly File[]): Promise<void> => {
     if (files.length === 0) return
@@ -171,9 +188,26 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
     const files = [...event.clipboardData.files]
     if (files.length > 0) { event.preventDefault(); void upload(files) }
   }
+  const saveVisionCapabilities = async (): Promise<void> => {
+    const selected = configurableTextOnlyModels.filter(model => visionSelection.includes(model.modelConfigId))
+    const saved = await controller.declareImageSupport(selected.map(model => ({
+      providerRoute: model.providerRoute,
+      modelId: model.modelId,
+    })))
+    if (saved) {
+      setVisionDialogOpen(false)
+      setVisionSelection([])
+    }
+  }
   const blockers = snapshot.capability?.blockers ?? []
   const selectedCount = form.selectedModelConfigIds.length
-  const canPreflight = !snapshot.busy && selectedCount >= LIMITS.modelMin && form.prompt.trim() !== '' && draft.baseline !== null && (snapshot.capability?.executionEnabled ?? false)
+  const needsResultRoot = draft.resultRootPath === null
+  const canPreflight = !snapshot.busy
+    && selectedCount >= LIMITS.modelMin
+    && form.taskName.trim() !== ''
+    && form.prompt.trim() !== ''
+    && (!needsResultRoot || resultRootPath.trim() !== '')
+    && (snapshot.capability?.executionEnabled ?? false)
   return (
     <section className="mpk-page">
       {blockers.length > 0 ? (
@@ -208,11 +242,11 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
           </div>
           <div className="mpk-card mpk-stack">
             <div>
-              <h2 className="mpk-section-title">项目起始目录 {requiredMark()}</h2>
+              <h2 className="mpk-section-title">项目起始目录（可选）</h2>
               <div className="mpk-baseline-guide">
                 <p><strong>已有项目对照</strong>填写现成仓库或落地页目录。系统会完整复制一份快照，各模型从相同文件改起，互不影响，也不会改你的原目录。</p>
-                <p><strong>全新项目对照</strong>填写一个空文件夹。各模型从同一空白起点从零生成，例如同时写一个落地页。</p>
-                <p>两种情况都必须指定目录后再预检。复制时不应用 .gitignore，目录越大越久。</p>
+                <p><strong>纯写作或全新任务</strong>可以不选择，系统会为每个模型创建相同的内部空白工作区。</p>
+                <p>选择已有项目时不应用 .gitignore，目录越大复制越久。</p>
               </div>
             </div>
             {draft.baseline === null ? (
@@ -222,10 +256,9 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
                   <button className="mpk-btn mpk-btn-secondary" type="button" onClick={async () => {
                     const path = await controller.chooseBaselineFolder()
                     if (path !== null) setBaselinePath(path)
-                  }}>选择目录</button>
-                  <button className="mpk-btn mpk-btn-secondary" disabled={baselinePath.trim() === ''} type="button" onClick={async () => { if (await persist()) await controller.selectBaseline(baselinePath) }}>复制为起始快照</button>
+                  }}>选择起始目录</button>
                 </div>
-                <small className="mpk-meta">可点「选择目录」用系统对话框，或直接粘贴绝对路径，再复制为快照。macOS 与 Windows 都支持。</small>
+                <small className="mpk-meta">不需要现有文件时可留空；选择后会冻结快照，但绝不会写回这个目录。</small>
               </div>
             ) : (
               <div className="mpk-stack">
@@ -239,6 +272,29 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
               </div>
             )}
           </div>
+          <div className="mpk-card mpk-stack">
+            <div>
+              <h2 className="mpk-section-title">结果输出目录 {requiredMark()}</h2>
+              <p className="mpk-meta">每次实验会创建独立子目录，直接保存各模型的文本结果；插件内部归档不会暴露在这里。</p>
+            </div>
+            {draft.resultRootPath === null ? (
+              <div className="mpk-stack">
+                <div className="mpk-actions">
+                  <input className="mpk-input" aria-label="结果输出目录" placeholder="结果保存位置的绝对路径" value={resultRootPath} onChange={event => setResultRootPath(event.target.value)} />
+                  <button className="mpk-btn mpk-btn-secondary" type="button" onClick={async () => {
+                    const path = await controller.chooseResultFolder()
+                    if (path !== null) setResultRootPath(path)
+                  }}>选择输出目录</button>
+                </div>
+                <small className="mpk-meta">模型结果会按任务和模型分目录保存，不覆盖已有文件。</small>
+              </div>
+            ) : (
+              <div className="mpk-stack">
+                <div><strong>结果将保存到</strong><div className="mpk-path">{draft.resultRootPath}</div></div>
+                <div><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.clearResultRoot() }}>更换输出目录</button></div>
+              </div>
+            )}
+          </div>
         </div>
         <aside className="mpk-rail">
           <div className="mpk-card mpk-models">
@@ -246,14 +302,24 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
               <h2 className="mpk-section-title">模型 <span className="mpk-pill">{selectedCount} / {LIMITS.modelMax}</span></h2>
               <input className="mpk-input" aria-label="搜索模型" placeholder="搜索模型或提供商" value={search} onChange={event => setSearch(event.target.value)} />
             </div>
-            <div className="mpk-model-list">{filtered.map(model => <ModelOption key={model.modelConfigId} model={model} checked={form.selectedModelConfigIds.includes(model.modelConfigId)} onChange={() => toggleModel(model)} />)}</div>
+            <div className="mpk-model-list">{filtered.map(model => <ModelOption key={model.modelConfigId} model={model} checked={form.selectedModelConfigIds.includes(model.modelConfigId)} requiresImage={draft.attachments.length > 0} onChange={() => toggleModel(model)} />)}</div>
+            {draft.attachments.length > 0 && configurableTextOnlyModels.length > 0 ? (
+              <div className="mpk-vision-guide" role="note">
+                <strong>有模型尚未声明图片能力</strong>
+                <span>无需查找配置文件，可直接在这里为实际支持图片的模型开启。</span>
+                <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => {
+                  setVisionSelection([])
+                  setVisionDialogOpen(true)
+                }}>配置图片能力</button>
+              </div>
+            ) : null}
             <div className="mpk-rail-foot">
               <label className="mpk-field">
                 <span>并发数</span>
                 <select className="mpk-select" aria-label="并发数" value={Math.min(form.concurrency, Math.max(1, selectedCount))} onChange={event => setField('concurrency', Number(event.target.value))}>{Array.from({ length: Math.max(1, selectedCount) }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value}</option>)}</select>
                 <small className="mpk-meta">同时执行的路数，默认 min(4, N)。排队不计入 30 分钟时限。</small>
               </label>
-              <button className="mpk-btn mpk-btn-block" type="button" disabled={!canPreflight} onClick={() => { void preflight() }}>预检并继续</button>
+              <button className="mpk-btn mpk-btn-block" type="button" disabled={!canPreflight} onClick={() => { void preflight() }}>{needsResultRoot ? '保存目录并预检' : '预检并继续'}</button>
               <button
                 className="mpk-text-btn"
                 type="button"
@@ -267,7 +333,70 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
           </div>
         </aside>
       </div>
+      {visionDialogOpen ? (
+        <VisionCapabilityDialog
+          models={configurableTextOnlyModels}
+          selected={visionSelection}
+          busy={snapshot.busy}
+          onToggle={modelConfigId => setVisionSelection(current => current.includes(modelConfigId)
+            ? current.filter(value => value !== modelConfigId)
+            : [...current, modelConfigId])}
+          onCancel={() => {
+            setVisionDialogOpen(false)
+            setVisionSelection([])
+          }}
+          onSave={() => { void saveVisionCapabilities() }}
+        />
+      ) : null}
     </section>
+  )
+}
+
+function VisionCapabilityDialog(props: {
+  models: readonly ModelListItem[]
+  selected: readonly string[]
+  busy: boolean
+  onToggle(modelConfigId: string): void
+  onCancel(): void
+  onSave(): void
+}): JSX.Element {
+  return (
+    <div className="mpk-modal-backdrop" onMouseDown={event => {
+      if (event.target === event.currentTarget) props.onCancel()
+    }}>
+      <section className="mpk-modal mpk-stack" role="dialog" aria-modal="true" aria-label="配置图片能力">
+        <div>
+          <div className="mpk-kicker">DSH 模型设置</div>
+          <h2>配置图片能力</h2>
+          <p className="mpk-hint">选择已经确认能够接收图片的模型。保存后会自动更新 DSH 配置和当前模型列表。</p>
+        </div>
+        <div className="mpk-capability-list">
+          {props.models.map(model => (
+            <label className="mpk-capability-option" key={model.modelConfigId}>
+              <input
+                type="checkbox"
+                aria-label={`声明 ${model.displayName} 支持图片`}
+                checked={props.selected.includes(model.modelConfigId)}
+                onChange={() => props.onToggle(model.modelConfigId)}
+              />
+              <span>
+                <strong>{model.displayName}</strong>
+                <span className="mpk-model-sub">{model.providerDisplayName} · {model.modelId}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <div className="mpk-capability-warning" role="note">
+          <strong>请勿凭模型名称猜测</strong>
+          <span>此操作只声明能力，不会探测上游接口。若模型或网关实际不支持图片，执行时仍会被上游拒绝。</span>
+        </div>
+        <div className="mpk-actions">
+          <button className="mpk-btn mpk-btn-secondary" type="button" disabled={props.busy} onClick={props.onCancel}>取消</button>
+          <span className="mpk-space" />
+          <button className="mpk-btn" type="button" disabled={props.busy || props.selected.length === 0} onClick={props.onSave}>保存图片能力</button>
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -304,17 +433,23 @@ function TaskTypeField({ value, onChange }: { value: string; onChange(value: str
   )
 }
 
-function ModelOption({ model, checked, onChange }: { model: ModelListItem; checked: boolean; onChange(): void }): JSX.Element {
+function ModelOption({ model, checked, requiresImage, onChange }: { model: ModelListItem; checked: boolean; requiresImage: boolean; onChange(): void }): JSX.Element {
   const blocked = model.support !== 'SUPPORTED'
+  const imageCapable = model.inputModalities.includes('image')
+  const imageBlocked = requiresImage && !imageCapable
   return (
-    <label className="mpk-model" data-disabled={blocked} data-checked={checked}>
-      <input type="checkbox" checked={checked} disabled={blocked} onChange={onChange} />
+    <label className="mpk-model" data-disabled={blocked || imageBlocked} data-checked={checked}>
+      <input type="checkbox" checked={checked} disabled={blocked || imageBlocked && !checked} onChange={onChange} />
       <span className="mpk-model-copy">
         <span className="mpk-model-name">{model.displayName}</span>
         <span className="mpk-model-sub">{model.providerDisplayName} · {model.modelId}</span>
         {model.supportReason ? <span className="mpk-model-sub">{model.supportReason}</span> : null}
       </span>
-      {blocked ? <span className="mpk-pill mpk-pill-blocked">不可用</span> : null}
+      {blocked
+        ? <span className="mpk-pill mpk-pill-blocked">不可用</span>
+        : requiresImage
+          ? <span className={`mpk-pill ${imageCapable ? 'mpk-pill-ready' : 'mpk-pill-blocked'}`}>{imageCapable ? '支持图片' : '仅文本'}</span>
+          : null}
     </label>
   )
 }
@@ -427,9 +562,56 @@ function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; contro
       || latest.state === 'FAILED' && (latest.error?.retryable ?? false)
     )
   })
-  const comparison = compare.map(id => allAttempts.find(item => item.attempt.attemptId === id)).filter((item): item is { run: Run; attempt: Attempt } => item !== undefined)
+  const comparison = compare
+    .map(id => allAttempts.find(item => item.attempt.attemptId === id))
+    .filter((item): item is { run: Run; attempt: Attempt } => item !== undefined && isTextComparable(item.attempt))
   const toggleCompare = (attemptId: string): void => setCompare(current => current.includes(attemptId) ? current.filter(id => id !== attemptId) : current.length < 2 ? [...current, attemptId] : [current[1]!, attemptId])
-  return <section className="mpk-page"><div className="mpk-titlebar"><div><div className="mpk-kicker">{lifecycleLabel(experiment.lifecycleState)} · {outcomeLabel(experiment.outcome)}</div><h1>{experiment.name}</h1><p>{experiment.experimentId} · 最后事件 {experiment.latestCursor}</p></div><div className="mpk-actions"><button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.openFolder(experiment.experimentId) }}>打开文件夹</button>{experiment.lifecycleState === 'ACTIVE' ? <button className="mpk-btn mpk-btn-danger" type="button" onClick={() => { if (confirm('停止当前实验的全部可取消执行？')) void controller.stopAll() }}>全部停止</button> : null}{hasRetryableFailure ? <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.retryFailed() }}>重试失败项</button> : null}</div></div><div className="mpk-stack"><div className="mpk-summary-grid"><Stat label="排队" value={String(experiment.counts.queued)} /><Stat label="执行中" value={String(experiment.counts.active)} /><Stat label="收尾中" value={String(experiment.counts.finalizing)} /><Stat label="已完成" value={`${experiment.counts.finished}/${experiment.counts.total}`} /><Stat label="归档" value={archiveLabel(experiment.archiveFreshness, experiment.archiveIntegrity)} /></div>{experiment.recoveryNotice ? <div className="mpk-alert" role="status"><strong>正在恢复</strong>{experiment.recoveryNotice}</div> : null}<div className="mpk-run-grid">{experiment.runs.map(run => <RunCard key={run.runId} run={run} experiment={experiment} events={snapshot.events} selected={compare} onToggleCompare={toggleCompare} controller={controller} />)}</div>{comparison.length > 0 ? <section className="mpk-card"><h2 className="mpk-section-title">原始结果双栏对照 <span className="mpk-pill">不评分 · 不排序</span></h2><div className="mpk-compare">{comparison.map(item => <div className="mpk-compare-pane" key={item.attempt.attemptId}><div className="mpk-model-name" style={{ marginBottom: 8 }}>{item.run.modelConfig.modelName} · Attempt {item.attempt.attemptNo}</div><div className="mpk-output">{(item.attempt.finalResponse ?? item.attempt.outputPreview) || '暂无输出'}</div></div>)}{comparison.length === 1 ? <div className="mpk-empty">再选择一路 Attempt 进行双栏对照</div> : null}</div></section> : null}</div></section>
+  return (
+    <section className="mpk-page">
+      <div className="mpk-titlebar">
+        <div>
+          <div className="mpk-kicker">{lifecycleLabel(experiment.lifecycleState)} · {outcomeLabel(experiment.outcome)}</div>
+          <h1>{experiment.name}</h1>
+          <p>{experiment.experimentId} · 最后事件 {experiment.latestCursor}</p>
+        </div>
+        <div className="mpk-actions">
+          <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.openFolder(experiment.experimentId) }}>打开结果文件夹</button>
+          {experiment.lifecycleState === 'ACTIVE' ? <button className="mpk-btn mpk-btn-danger" type="button" onClick={() => { if (confirm('停止当前实验的全部可取消执行？')) void controller.stopAll() }}>全部停止</button> : null}
+          {hasRetryableFailure ? <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.retryFailed() }}>重试失败项</button> : null}
+        </div>
+      </div>
+      <div className="mpk-stack">
+        <div className="mpk-summary-grid">
+          <Stat label="排队" value={String(experiment.counts.queued)} />
+          <Stat label="执行中" value={String(experiment.counts.active)} />
+          <Stat label="收尾中" value={String(experiment.counts.finalizing)} />
+          <Stat label="已完成" value={`${experiment.counts.finished}/${experiment.counts.total}`} />
+          <Stat label="归档" value={archiveLabel(experiment.archiveFreshness, experiment.archiveIntegrity)} />
+        </div>
+        <div className="mpk-mode-guide" role="note">
+          <strong>结果视图会自动适配产物</strong>
+          <span>纯文本或单个文本文件可双栏对照；多文件、删除或二进制产物显示工程变更摘要。</span>
+        </div>
+        {experiment.recoveryNotice ? <div className="mpk-alert" role="status"><strong>正在恢复</strong>{experiment.recoveryNotice}</div> : null}
+        <div className="mpk-run-grid">{experiment.runs.map(run => <RunCard key={run.runId} run={run} experiment={experiment} events={snapshot.events} selected={compare} onToggleCompare={toggleCompare} controller={controller} />)}</div>
+        {comparison.length > 0 ? (
+          <section className="mpk-card">
+            <h2 className="mpk-section-title">文本结果双栏对照 <span className="mpk-pill">不评分 · 不排序</span></h2>
+            <div className="mpk-compare">
+              {comparison.map(item => (
+                <div className="mpk-compare-pane" key={item.attempt.attemptId}>
+                  <div className="mpk-model-name" style={{ marginBottom: 8 }}>{item.run.modelConfig.modelName} · Attempt {item.attempt.attemptNo}</div>
+                  <div className="mpk-meta" style={{ marginBottom: 8 }}>{comparisonSourceLabel(item.attempt)}</div>
+                  <div className="mpk-output">{comparisonText(item.attempt) || '暂无输出'}</div>
+                </div>
+              ))}
+              {comparison.length === 1 ? <div className="mpk-empty">再选择一路文本结果进行双栏对照</div> : null}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </section>
+  )
 }
 
 function RunCard(props: { run: Run; experiment: ExperimentProjection; events: UiSnapshot['events']; selected: readonly string[]; onToggleCompare(id: string): void; controller: ModelPkUiController }): JSX.Element {
@@ -438,11 +620,119 @@ function RunCard(props: { run: Run; experiment: ExperimentProjection; events: Ui
   const runEvents = allRunEvents.slice(-100)
   const cancellable = ['QUEUED', 'PREPARING', 'DISPATCHING', 'RUNNING', 'RECOVERING'].includes(latest.state)
   const retryable = ['TIMED_OUT', 'STALLED', 'DISCONNECTED'].includes(latest.state) || latest.state === 'FAILED' && (latest.error?.retryable ?? false)
-  return <article className="mpk-card mpk-run"><div className="mpk-run-head"><div><div className="mpk-kicker">第 {props.run.ordinal + 1} 路</div><h2>{props.run.modelConfig.modelName}</h2><div className="mpk-model-sub">{props.run.modelConfig.providerRoute} · {props.run.modelConfig.protocol}</div></div><span className={`mpk-pill ${stateClass(latest.state)}`}>{attemptStateLabel(latest.state)}</span></div><div className="mpk-output" aria-label={`${props.run.modelConfig.modelName} 原始输出`}>{(latest.finalResponse ?? latest.outputPreview) || '等待输出…'}</div><div className="mpk-actions"><label className="mpk-inline-label"><input type="checkbox" checked={props.selected.includes(latest.attemptId)} onChange={() => props.onToggleCompare(latest.attemptId)} />加入对照</label><span className="mpk-space" />{cancellable ? <button className="mpk-btn mpk-btn-danger mpk-btn-small" type="button" onClick={() => { void props.controller.stopAttempt(latest.attemptId, latest.lifecycleVersion) }}>停止</button> : null}{retryable ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.retry(props.run.runId, latest.attemptId) }}>重试</button> : null}{['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'STALLED', 'DISCONNECTED', 'CANCELLED'].includes(latest.state) ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.openResult(latest.attemptId) }}>打开结果目录</button> : null}{latest.state === 'SUCCEEDED' ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.runAgain(props.run.runId, latest.attemptId) }}>再跑一次</button> : null}</div><details><summary className="mpk-section-title">执行历史 ({props.run.attempts.length})</summary><div className="mpk-history">{[...props.run.attempts].reverse().map(attempt => <div className="mpk-history-row" key={attempt.attemptId}><input aria-label={`选择第 ${attempt.attemptNo} 次执行对照`} type="checkbox" checked={props.selected.includes(attempt.attemptId)} onChange={() => props.onToggleCompare(attempt.attemptId)} /><span>#{attempt.attemptNo} · {triggerLabel(attempt.trigger)} · {attemptStateLabel(attempt.state)}<span className="mpk-meta" style={{ display: 'block' }}>{attempt.finalizedAt ?? attempt.queuedAt}</span></span><span className={`mpk-pill ${attempt.archiveCompleteness === 'COMPLETE' ? 'mpk-pill-ready' : 'mpk-pill-warning'}`}>{archiveCompletenessLabel(attempt.archiveCompleteness)}</span></div>)}</div></details><details><summary className="mpk-section-title">日志与事件（最近 {runEvents.length} 条{allRunEvents.length > runEvents.length ? ` / 共 ${allRunEvents.length}` : ''}）</summary><p className="mpk-meta">界面只展示最近 100 条。完整记录在实验目录的 events.jsonl。</p><div className="mpk-event-list">{runEvents.map(event => <div className="mpk-event" key={event.cursor}><span>#{event.cursor}</span><span>{eventKindLabel(event.kind)}</span></div>)}</div></details><details><summary className="mpk-section-title">产物与诊断</summary><p className="mpk-meta">该次执行的全部产物都在结果目录里，不一定只有一个文件。</p><pre className="mpk-mono">{JSON.stringify({ archiveCompleteness: latest.archiveCompleteness, workspaceSealState: latest.workspaceSealState, error: latest.error, archiveError: latest.archiveError, providerRequestId: latest.providerRequestId, fingerprints: { input: latest.inputFingerprint, effectiveInput: latest.effectiveInputHash, harness: latest.resolvedHarnessFingerprint } }, null, 2)}</pre></details></article>
+  return (
+    <article className="mpk-card mpk-run">
+      <div className="mpk-run-head">
+        <div><div className="mpk-kicker">第 {props.run.ordinal + 1} 路</div><h2>{props.run.modelConfig.modelName}</h2><div className="mpk-model-sub">{props.run.modelConfig.providerRoute} · {props.run.modelConfig.protocol}</div></div>
+        <span className={`mpk-pill ${stateClass(latest.state)}`}>{attemptStateLabel(latest.state)}</span>
+      </div>
+      <AttemptResult attempt={latest} modelName={props.run.modelConfig.modelName} />
+      {latest.resultExportError !== null ? <div className="mpk-alert" role="alert"><strong>结果导出失败</strong><span>{latest.resultExportError.userMessage}</span></div> : null}
+      <div className="mpk-actions">
+        {isTextComparable(latest) ? (
+          <label className="mpk-inline-label">
+            <input aria-label={`加入 ${props.run.modelConfig.modelName} 第 ${latest.attemptNo} 次执行对照`} type="checkbox" checked={props.selected.includes(latest.attemptId)} onChange={() => props.onToggleCompare(latest.attemptId)} />
+            加入文本对照
+          </label>
+        ) : null}
+        <span className="mpk-space" />
+        {cancellable ? <button className="mpk-btn mpk-btn-danger mpk-btn-small" type="button" onClick={() => { void props.controller.stopAttempt(latest.attemptId, latest.lifecycleVersion) }}>停止</button> : null}
+        {retryable ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.retry(props.run.runId, latest.attemptId) }}>重试</button> : null}
+        {['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'STALLED', 'DISCONNECTED', 'CANCELLED'].includes(latest.state) ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.openResult(latest.attemptId) }}>打开结果目录</button> : null}
+        {latest.state === 'SUCCEEDED' ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.exportWorkspace(latest.attemptId) }}>导出工作区</button> : null}
+        {latest.state === 'SUCCEEDED' ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.runAgain(props.run.runId, latest.attemptId) }}>再跑一次</button> : null}
+      </div>
+      <details>
+        <summary className="mpk-section-title">执行历史 ({props.run.attempts.length})</summary>
+        <div className="mpk-history">{[...props.run.attempts].reverse().map(attempt => (
+          <div className="mpk-history-row" key={attempt.attemptId}>
+            {isTextComparable(attempt)
+              ? <input aria-label={`选择 ${props.run.modelConfig.modelName} 第 ${attempt.attemptNo} 次执行文本对照`} type="checkbox" checked={props.selected.includes(attempt.attemptId)} onChange={() => props.onToggleCompare(attempt.attemptId)} />
+              : <span className="mpk-pill">工程</span>}
+            <span>#{attempt.attemptNo} · {triggerLabel(attempt.trigger)} · {attemptStateLabel(attempt.state)}<span className="mpk-meta" style={{ display: 'block' }}>{attempt.finalizedAt ?? attempt.queuedAt}</span></span>
+            <span className={`mpk-pill ${attempt.archiveCompleteness === 'COMPLETE' ? 'mpk-pill-ready' : 'mpk-pill-warning'}`}>{archiveCompletenessLabel(attempt.archiveCompleteness)}</span>
+          </div>
+        ))}</div>
+      </details>
+      <details><summary className="mpk-section-title">日志与事件（最近 {runEvents.length} 条{allRunEvents.length > runEvents.length ? ` / 共 ${allRunEvents.length}` : ''}）</summary><p className="mpk-meta">界面只展示最近 100 条。完整记录保存在插件内部归档。</p><div className="mpk-event-list">{runEvents.map(event => <div className="mpk-event" key={event.cursor}><span>#{event.cursor}</span><span>{eventKindLabel(event.kind)}</span></div>)}</div></details>
+      <details><summary className="mpk-section-title">产物与诊断</summary><p className="mpk-meta">文本结果会自动导出；完整工作区按需导出，避免重复占用磁盘。</p><pre className="mpk-mono">{JSON.stringify({ archiveCompleteness: latest.archiveCompleteness, workspaceSealState: latest.workspaceSealState, workspaceSummary: latest.workspaceSummary, tokenUsage: latest.tokenUsage, resultPath: latest.resultPath, resultExportError: latest.resultExportError, error: latest.error, archiveError: latest.archiveError, providerRequestId: latest.providerRequestId, fingerprints: { input: latest.inputFingerprint, effectiveInput: latest.effectiveInputHash, harness: latest.resolvedHarnessFingerprint } }, null, 2)}</pre></details>
+    </article>
+  )
+}
+
+function AttemptResult({ attempt, modelName }: { attempt: Attempt; modelName: string }): JSX.Element {
+  const summary = attempt.workspaceSummary
+  if (summary?.mode === 'ENGINEERING') {
+    return (
+      <section className="mpk-engineering" aria-label={`${modelName} 工程结果`}>
+        <div className="mpk-engineering-head"><span className="mpk-pill">工程结果</span><strong>{summary.changedFileCount} 个文件发生变化</strong></div>
+        <div className="mpk-change-counts">
+          <span>新增 {summary.addedFileCount}</span><span>修改 {summary.modifiedFileCount}</span><span>删除 {summary.deletedFileCount}</span>
+        </div>
+        <div className="mpk-file-list">{summary.files.map(file => (
+          <div className="mpk-file-row" key={`${file.changeType}:${file.path}`}><span className={`mpk-change-kind mpk-change-${file.changeType.toLowerCase()}`}>{fileChangeLabel(file.changeType)}</span><code>{file.path}</code><span>{file.byteLength === null ? '—' : formatBytes(file.byteLength)}</span></div>
+        ))}</div>
+        {summary.truncated ? <p className="mpk-meta">文件较多，仅展示前 {summary.files.length} 项。</p> : null}
+        <div className="mpk-acceptance"><strong>验收测试未配置</strong><span>当前仅展示确定性的工作区变化，不会自动猜测并执行命令。</span></div>
+        <AttemptMetrics attempt={attempt} />
+        {(attempt.finalResponse ?? attempt.outputPreview).length > 0 ? <details><summary>查看模型说明</summary><div className="mpk-output mpk-output-compact">{attempt.finalResponse ?? attempt.outputPreview}</div></details> : null}
+      </section>
+    )
+  }
+  return (
+    <section className="mpk-text-result">
+      <div className="mpk-result-label">{comparisonSourceLabel(attempt)}</div>
+      <div className="mpk-output" aria-label={`${modelName} 文本结果`}>{comparisonText(attempt) || '等待输出…'}</div>
+      <AttemptMetrics attempt={attempt} />
+    </section>
+  )
+}
+
+function AttemptMetrics({ attempt }: { attempt: Attempt }): JSX.Element | null {
+  const duration = attemptDuration(attempt)
+  const tokenUsage = attempt.tokenUsage ?? null
+  if (duration === null && tokenUsage === null) return null
+  return (
+    <div className="mpk-result-metrics">
+      {duration === null ? null : <span>耗时 {duration}</span>}
+      {tokenUsage === null ? <span>Token 暂无统计</span> : <span>{tokenUsage.inputTokens} 输入 · {tokenUsage.outputTokens} 输出</span>}
+      {tokenUsage !== null && tokenUsage.cacheReadTokens > 0 ? <span>缓存读取 {tokenUsage.cacheReadTokens}</span> : null}
+    </div>
+  )
+}
+
+function isTextComparable(attempt: Attempt): boolean {
+  return attempt.workspaceSummary?.mode !== 'ENGINEERING' && comparisonText(attempt).length > 0
+}
+
+function comparisonText(attempt: Attempt): string {
+  if (attempt.workspaceSummary?.mode === 'TEXT_FILE' && attempt.workspaceSummary.textContent !== null) return attempt.workspaceSummary.textContent
+  return attempt.finalResponse ?? attempt.outputPreview
+}
+
+function comparisonSourceLabel(attempt: Attempt): string {
+  if (attempt.workspaceSummary?.mode === 'TEXT_FILE' && attempt.workspaceSummary.textFilePath !== null) return `单文件文本 · ${attempt.workspaceSummary.textFilePath}`
+  if (attempt.workspaceSummary?.mode === 'TEXT_RESPONSE') return '纯文本回复'
+  return '模型最终回复'
+}
+
+function attemptDuration(attempt: Attempt): string | null {
+  if (attempt.startedAt === null) return null
+  const end = attempt.executionEndedAt ?? attempt.finalizedAt
+  if (end === null) return null
+  const milliseconds = Date.parse(end) - Date.parse(attempt.startedAt)
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return null
+  const seconds = Math.max(1, Math.round(milliseconds / 1000))
+  const minutes = Math.floor(seconds / 60)
+  return minutes === 0 ? `${seconds}秒` : `${minutes}分 ${seconds % 60}秒`
+}
+
+function fileChangeLabel(value: 'ADDED' | 'MODIFIED' | 'DELETED'): string {
+  return { ADDED: '新增', MODIFIED: '修改', DELETED: '删除' }[value]
 }
 
 function StoragePage({ snapshot, controller }: { snapshot: UiSnapshot; controller: ModelPkUiController }): JSX.Element {
-  return <section className="mpk-page mpk-page-narrow"><div className="mpk-titlebar"><div><div className="mpk-kicker">Owner-only local archive</div><h1>本地存储管理</h1><p>仅展示终态实验；数据永久保留，直到手动删除。</p></div><button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.loadStorage() }}>刷新</button></div><div className="mpk-card">{snapshot.storage.length === 0 ? <div className="mpk-empty">没有可管理的终态实验</div> : <table className="mpk-table"><thead><tr><th>实验</th><th>状态</th><th>时间</th><th>占用</th><th>操作</th></tr></thead><tbody>{snapshot.storage.map(item => <tr key={item.experimentId}><td><strong>{item.name}</strong><div className="mpk-meta">{item.experimentId}</div></td><td>{item.lifecycleState}<div className="mpk-meta">{item.outcome ?? '—'}</div></td><td>{formatDate(item.settledAt ?? item.createdAt)}</td><td>{formatBytes(item.byteLength)}</td><td><div className="mpk-actions"><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.openFolder(item.experimentId) }}>打开</button><button className="mpk-btn mpk-btn-danger mpk-btn-small" disabled={!item.canDelete} title={item.blockedReason ?? ''} type="button" onClick={() => { if (confirm(`永久删除“${item.name}”及全部 Prompt、附件、结果和归档？`)) void controller.deleteExperiment(item.experimentId) }}>删除</button></div></td></tr>)}</tbody></table>}</div></section>
+  return <section className="mpk-page mpk-page-narrow"><div className="mpk-titlebar"><div><div className="mpk-kicker">Owner-only local archive</div><h1>本地存储管理</h1><p>这里管理插件内部归档；删除归档不会删除已经导出到用户目录的结果。</p></div><button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.loadStorage() }}>刷新</button></div><div className="mpk-card">{snapshot.storage.length === 0 ? <div className="mpk-empty">没有可管理的终态实验</div> : <table className="mpk-table"><thead><tr><th>实验</th><th>状态</th><th>时间</th><th>占用</th><th>操作</th></tr></thead><tbody>{snapshot.storage.map(item => <tr key={item.experimentId}><td><strong>{item.name}</strong><div className="mpk-meta">{item.experimentId}</div></td><td>{item.lifecycleState}<div className="mpk-meta">{item.outcome ?? '—'}</div></td><td>{formatDate(item.settledAt ?? item.createdAt)}</td><td>{formatBytes(item.byteLength)}</td><td><div className="mpk-actions"><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.openFolder(item.experimentId) }}>打开结果</button><button className="mpk-btn mpk-btn-danger mpk-btn-small" disabled={!item.canDelete} title={item.blockedReason ?? ''} type="button" onClick={() => { if (confirm(`永久删除“${item.name}”的插件内部 Prompt、附件、证据和归档？已导出的用户结果会保留。`)) void controller.deleteExperiment(item.experimentId) }}>删除内部归档</button></div></td></tr>)}</tbody></table>}</div></section>
 }
 
 function Stat({ label, value }: { label: string; value: string }): JSX.Element {

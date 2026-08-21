@@ -75,6 +75,7 @@ export type ModelPkErrorCode =
   | 'STALL_TIMEOUT'
   | 'EXECUTION_TIMEOUT'
   | 'ARCHIVE_WRITE_FAILED'
+  | 'RESULT_EXPORT_FAILED'
   | 'DISK_FULL'
   | 'ARCHIVE_PATH_ESCAPE'
   | 'CANCEL_FAILED'
@@ -185,6 +186,7 @@ export interface Draft {
   readonly selectedModelConfigIds: readonly Hash[]
   readonly attachments: readonly AttachmentRecord[]
   readonly baseline: BaselineSnapshot | null
+  readonly resultRootPath: string | null
   readonly concurrency: number
   readonly createdAt: IsoDateTime
   readonly updatedAt: IsoDateTime
@@ -251,6 +253,7 @@ export interface PreflightSnapshot {
   readonly snapshotHash: Hash
   readonly status: PreflightStatus
   readonly checks: readonly PreflightCheck[]
+  readonly resultRootPath: string | null
   readonly taskPackage: TaskPackage
   readonly taskPackageHash: Hash
   readonly models: readonly ModelConfigSnapshot[]
@@ -261,6 +264,32 @@ export interface PreflightSnapshot {
   readonly capacityEstimateBytes: number
   readonly confirmedSnapshotHash: Hash | null
   readonly createdAt: IsoDateTime
+}
+
+export interface WorkspaceFileChange {
+  readonly path: string
+  readonly changeType: 'ADDED' | 'MODIFIED' | 'DELETED'
+  readonly byteLength: number | null
+}
+
+export interface WorkspaceSummary {
+  readonly mode: 'TEXT_RESPONSE' | 'TEXT_FILE' | 'ENGINEERING'
+  readonly changedFileCount: number
+  readonly addedFileCount: number
+  readonly modifiedFileCount: number
+  readonly deletedFileCount: number
+  readonly files: readonly WorkspaceFileChange[]
+  readonly truncated: boolean
+  readonly textFilePath: string | null
+  readonly textContent: string | null
+}
+
+export interface ModelTokenUsage {
+  readonly requestCount: number
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly cacheReadTokens: number
+  readonly cacheWriteTokens: number
 }
 
 export interface Attempt {
@@ -312,6 +341,10 @@ export interface Attempt {
   readonly workspaceSealState: WorkspaceSealState
   readonly workspacePath: string | null
   readonly artifactPath: string | null
+  readonly resultPath: string | null
+  readonly resultExportError: ModelPkError | null
+  readonly workspaceSummary: WorkspaceSummary | null
+  readonly tokenUsage: ModelTokenUsage | null
   readonly finalResponse: string | null
   readonly outputPreview: string
   readonly archiveCompleteness: ArchiveCompleteness
@@ -359,6 +392,7 @@ export interface Experiment {
   readonly dshVersion: string
   readonly pluginVersion: string
   readonly experimentPath: string
+  readonly resultPath: string | null
   readonly runs: readonly Run[]
   readonly createdAt: IsoDateTime
   readonly frozenAt: IsoDateTime
@@ -418,6 +452,7 @@ export interface StorageListItem {
   readonly settledAt: IsoDateTime | null
   readonly byteLength: number
   readonly experimentPath: string
+  readonly resultPath: string | null
   readonly canDelete: boolean
   readonly blockedReason: string | null
 }
@@ -485,6 +520,12 @@ export interface BaselineSelectRequest {
   readonly draftId: UUID
   readonly expectedRevision: number
   readonly sourcePath: string
+}
+
+export interface ResultRootSelectRequest {
+  readonly draftId: UUID
+  readonly expectedRevision: number
+  readonly rootPath: string
 }
 
 export interface PreflightRequest {

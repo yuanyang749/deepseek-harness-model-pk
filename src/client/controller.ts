@@ -11,7 +11,8 @@ import type {
   StorageListItem,
 } from '../contracts/types.js'
 import { RPC_ENDPOINTS } from '../contracts/rpc.js'
-import { ClientApiError, ModelPkApi } from './api.js'
+import { ClientApiError, DshApiError, ModelPkApi } from './api.js'
+import { createImageInputMutation, VisionSettingsError, type ImageInputTarget } from './vision-settings.js'
 
 export type UiScreen = 'create' | 'preflight' | 'experiment' | 'storage'
 
@@ -223,12 +224,64 @@ export class ModelPkUiController {
     })
   }
 
+  async chooseResultFolder(): Promise<string | null> {
+    try {
+      const result = await this.api.native<{ path: string | null }>(RPC_ENDPOINTS.resultRootChooseFolder, {})
+      return result.path
+    } catch (error) {
+      this.patch({ error: clientError(error, 'client') })
+      return null
+    }
+  }
+
+  async selectResultRoot(rootPath: string): Promise<void> {
+    await this.run('正在验证结果输出目录…', async () => {
+      const draft = this.requiredDraft()
+      const next = await this.api.business<Draft>(RPC_ENDPOINTS.resultRootSelect, {
+        draftId: draft.draftId,
+        expectedRevision: draft.revision,
+        rootPath,
+      })
+      this.patch({ draft: next, preflight: null })
+    })
+  }
+
+  async clearResultRoot(): Promise<void> {
+    await this.run('正在更换结果输出目录…', async () => {
+      const draft = this.requiredDraft()
+      const next = await this.api.business<Draft>(RPC_ENDPOINTS.resultRootClear, {
+        draftId: draft.draftId,
+        expectedRevision: draft.revision,
+      })
+      this.patch({ draft: next, preflight: null })
+    })
+  }
+
   async runPreflight(): Promise<void> {
     await this.run('正在执行 Preflight…', async () => {
       const draft = this.requiredDraft()
       const preflight = await this.api.business<PreflightSnapshot>(RPC_ENDPOINTS.preflightRun, { draftId: draft.draftId })
       this.patch({ preflight, screen: 'preflight' })
     })
+  }
+
+  async declareImageSupport(targets: readonly ImageInputTarget[]): Promise<boolean> {
+    let saved = false
+    await this.run('正在保存图片能力…', async () => {
+      const settings = await this.api.settingsDescribe()
+      const mutation = createImageInputMutation(settings, targets)
+      await this.api.settingsMutate(mutation)
+      const models = await this.api.business<readonly ModelListItem[]>(RPC_ENDPOINTS.modelsList, {})
+      const unresolved = targets.filter(target => !models.some(model => (
+        model.providerRoute === target.providerRoute
+        && model.modelId === target.modelId
+        && model.inputModalities.includes('image')
+      )))
+      if (unresolved.length > 0) throw new VisionSettingsError('设置已保存，但模型目录尚未刷新，请稍后重试。')
+      this.patch({ models, preflight: null })
+      saved = true
+    })
+    return saved
   }
 
   async confirmWarning(): Promise<void> {
@@ -299,6 +352,20 @@ export class ModelPkUiController {
       experimentId: experiment.experimentId,
       attemptId,
     }))
+  }
+
+  async exportWorkspace(attemptId: string): Promise<void> {
+    const experiment = this.requiredExperiment()
+    await this.run('正在导出完整工作区…', async () => {
+      await this.api.native(RPC_ENDPOINTS.attemptExportWorkspace, {
+        experimentId: experiment.experimentId,
+        attemptId,
+      })
+      await this.api.native(RPC_ENDPOINTS.attemptOpenResult, {
+        experimentId: experiment.experimentId,
+        attemptId,
+      })
+    })
   }
 
   async loadStorage(): Promise<void> {
@@ -429,6 +496,30 @@ function mergeEvents(current: readonly AuditEvent[], next: readonly AuditEvent[]
 
 function clientError(error: unknown, phase: string): ModelPkError {
   if (error instanceof ClientApiError) return error.detail
+  if (error instanceof DshApiError) {
+    const conflict = error.code === 'settings-conflict'
+    return {
+      code: conflict ? 'CONFLICT' : 'VALIDATION_ERROR',
+      phase: 'settings',
+      retryable: conflict,
+      userMessage: conflict ? '配置刚刚被其他页面修改，请重新打开后再试。' : error.message,
+      technicalMessage: `${error.code}: ${error.message}`,
+      occurredAt: new Date().toISOString(),
+      ...(typeof error.details === 'object' && error.details !== null
+        ? { details: error.details as Readonly<Record<string, unknown>> }
+        : {}),
+    }
+  }
+  if (error instanceof VisionSettingsError) {
+    return {
+      code: 'VALIDATION_ERROR',
+      phase: 'settings',
+      retryable: false,
+      userMessage: error.message,
+      technicalMessage: error.stack ?? error.message,
+      occurredAt: new Date().toISOString(),
+    }
+  }
   return {
     code: 'DSH_UNREACHABLE',
     phase,

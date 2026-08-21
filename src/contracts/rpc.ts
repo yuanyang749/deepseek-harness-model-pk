@@ -14,6 +14,9 @@ export const RPC_ENDPOINTS = Object.freeze({
   baselineSelect: 'v1/draft/baseline/select',
   baselineChooseFolder: 'v1/draft/baseline/choose-folder',
   baselineClear: 'v1/draft/baseline/clear',
+  resultRootSelect: 'v1/draft/result-root/select',
+  resultRootChooseFolder: 'v1/draft/result-root/choose-folder',
+  resultRootClear: 'v1/draft/result-root/clear',
   preflightRun: 'v1/preflight/run',
   preflightConfirm: 'v1/preflight/confirm-warning',
   experimentStart: 'v1/experiment/start',
@@ -24,8 +27,8 @@ export const RPC_ENDPOINTS = Object.freeze({
   experimentRetryFailed: 'v1/experiment/retry-failed',
   experimentOpenFolder: 'v1/experiment/open-folder',
   attemptOpenResult: 'v1/attempt/open-result',
+  attemptExportWorkspace: 'v1/attempt/export-workspace',
   experimentDelete: 'v1/experiment/delete',
 } as const)
 
 export type RpcEndpoint = typeof RPC_ENDPOINTS[keyof typeof RPC_ENDPOINTS]
-

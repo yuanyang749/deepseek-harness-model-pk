@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { lstat, realpath } from 'node:fs/promises'
-import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import type {
   Attempt,
   DurableAction,
@@ -19,7 +19,7 @@ import { LIMITS } from '../contracts/constants.js'
 import { createAttempt, createExperimentDefinition } from '../domain/factory.js'
 import { ModelPkException, fail, modelPkError, normalizeError } from '../core/error.js'
 import { hashCanonical } from '../core/jcs.js'
-import { isCancellableState, isRetryableTerminal } from '../core/state-machine.js'
+import { isCancellableState, isRetryableTerminal, isTerminalAttemptState } from '../core/state-machine.js'
 import type { ControlStore } from '../storage/store.js'
 import type { ArchiveManager } from './archive.js'
 import type { ModelCatalog } from './model-catalog.js'
@@ -110,12 +110,17 @@ export class Coordinator {
     const active = this.store.activeExperiment()
     if (active !== null) fail('CONFLICT', 'start', '当前已有运行中的 Experiment', `active experiment=${active.experimentId}`)
     const provisionalId = crypto.randomUUID()
-    const path = this.archive.experimentPath(provisionalId, snapshot.taskPackage.taskName)
+    if (snapshot.resultRootPath === null) fail('VALIDATION_ERROR', 'start', '请选择结果输出目录')
+    const createdAt = new Date()
+    const path = this.archive.experimentPath(provisionalId, snapshot.taskPackage.taskName, createdAt)
+    const resultPath = this.archive.resultPath(snapshot.resultRootPath, provisionalId, snapshot.taskPackage.taskName, createdAt)
     const definition = createExperimentDefinition({
       preflight: snapshot,
       experimentPath: path,
+      resultPath,
       experimentId: provisionalId,
       firstQueueSeq: this.store.nextQueueSequence(),
+      now: createdAt.toISOString(),
     })
     const action = this.store.createExperiment({
       ...definition,
@@ -312,9 +317,11 @@ export class Coordinator {
 
   async openFolder(experimentId: UUID): Promise<{ opened: true }> {
     const experiment = this.store.getExperimentRequired(experimentId)
-    const registered = resolve(experiment.experimentPath)
+    const registered = resolve(experiment.resultPath ?? experiment.experimentPath)
     const actual = await realpath(registered)
-    const root = await realpath(this.archive.layout.experiments)
+    const root = experiment.resultPath === null
+      ? await realpath(this.archive.layout.experiments)
+      : await realpath(dirname(experiment.resultPath))
     const rel = relative(root, actual)
     if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) fail('ARCHIVE_PATH_ESCAPE', 'open-folder', '实验目录路径无效', `path outside data root: ${actual}`)
     const info = await lstat(actual)
@@ -324,7 +331,11 @@ export class Coordinator {
   }
 
   async chooseBaselineFolder(): Promise<{ path: string | null }> {
-    return chooseFolder()
+    return chooseFolder('选择项目起始目录')
+  }
+
+  async chooseResultFolder(): Promise<{ path: string | null }> {
+    return chooseFolder('选择结果输出目录')
   }
 
   async openResult(experimentId: UUID, attemptId: UUID): Promise<{ opened: true }> {
@@ -332,21 +343,36 @@ export class Coordinator {
     const attempt = experiment.runs.flatMap(run => run.attempts).find(item => item.attemptId === attemptId)
     const run = experiment.runs.find(item => item.attempts.some(candidate => candidate.attemptId === attemptId))
     if (attempt === undefined || run === undefined) fail('NOT_FOUND', 'open-result', '执行记录不存在', `attempt missing ${attemptId}`)
-    const registered = resolve(
-      experiment.experimentPath,
-      'runs',
-      run.runId,
-      'attempts',
-      `${String(attempt.attemptNo).padStart(3, '0')}-${attempt.attemptId}`,
-    )
+    const registered = experiment.resultPath === null
+      ? resolve(
+        experiment.experimentPath,
+        'runs',
+        run.runId,
+        'attempts',
+        `${String(attempt.attemptNo).padStart(3, '0')}-${attempt.attemptId}`,
+      )
+      : this.archive.runResultDirectory(experiment, run)
     const actual = await realpath(registered)
-    const root = await realpath(this.archive.layout.experiments)
+    const root = experiment.resultPath === null
+      ? await realpath(this.archive.layout.experiments)
+      : await realpath(experiment.resultPath)
     const rel = relative(root, actual)
     if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) fail('ARCHIVE_PATH_ESCAPE', 'open-result', '结果目录路径无效', `path outside data root: ${actual}`)
     const info = await lstat(actual)
     if (!info.isDirectory() || info.isSymbolicLink()) fail('ARCHIVE_PATH_ESCAPE', 'open-result', '结果目录路径无效', `not a regular directory: ${actual}`)
     await openInFileManager(actual)
     return { opened: true }
+  }
+
+  async exportAttemptWorkspace(experimentId: UUID, attemptId: UUID): Promise<{ path: string }> {
+    const experiment = this.store.getExperimentRequired(experimentId)
+    const run = experiment.runs.find(item => item.attempts.some(candidate => candidate.attemptId === attemptId))
+    const attempt = run?.attempts.find(item => item.attemptId === attemptId)
+    if (run === undefined || attempt === undefined) fail('NOT_FOUND', 'workspace-export', '执行记录不存在', `attempt missing ${attemptId}`)
+    if (!isTerminalAttemptState(attempt.state) || attempt.archiveCompleteness !== 'COMPLETE') {
+      fail('CONFLICT', 'workspace-export', '仅可导出已完成且归档完整的工作区', `state=${attempt.state}; archive=${attempt.archiveCompleteness}`)
+    }
+    return this.archive.exportAttemptWorkspace(experiment, run, attempt)
   }
 
   async deleteExperiment(envelope: OperationEnvelope<{ readonly experimentId: UUID }>): Promise<Readonly<Record<string, unknown>>> {
@@ -528,15 +554,15 @@ function openInFileManager(target: string): Promise<void> {
   })
 }
 
-function chooseFolder(): Promise<{ path: string | null }> {
-  if (process.platform === 'darwin') return chooseFolderMac()
-  if (process.platform === 'win32') return chooseFolderWindows()
+function chooseFolder(prompt: string): Promise<{ path: string | null }> {
+  if (process.platform === 'darwin') return chooseFolderMac(prompt)
+  if (process.platform === 'win32') return chooseFolderWindows(prompt)
   return Promise.reject(new Error(`选择目录仅支持 macOS 和 Windows，当前是 ${process.platform}`))
 }
 
-function chooseFolderMac(): Promise<{ path: string | null }> {
+function chooseFolderMac(prompt: string): Promise<{ path: string | null }> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn('/usr/bin/osascript', ['-e', 'POSIX path of (choose folder with prompt "选择项目起始目录")'], {
+    const child = spawn('/usr/bin/osascript', ['-e', `POSIX path of (choose folder with prompt "${prompt}")`], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { PATH: '/usr/bin:/bin' },
     })
@@ -555,13 +581,13 @@ function chooseFolderMac(): Promise<{ path: string | null }> {
   })
 }
 
-function chooseFolderWindows(): Promise<{ path: string | null }> {
+function chooseFolderWindows(prompt: string): Promise<{ path: string | null }> {
   return new Promise((resolvePromise, rejectPromise) => {
     const script = [
       'Add-Type -AssemblyName System.Windows.Forms',
       '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
       '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
-      '$dialog.Description = "选择项目起始目录"',
+      `$dialog.Description = "${prompt}"`,
       '$dialog.ShowNewFolderButton = $true',
       'if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 2 }',
       'Write-Output $dialog.SelectedPath',

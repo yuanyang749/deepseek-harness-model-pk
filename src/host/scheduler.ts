@@ -334,6 +334,13 @@ export class Scheduler {
         finalizationStage: 'ARCHIVE_RESOLVED',
         archiveCompleteness,
         archiveError: archived.error,
+        resultPath: archived.resultPath,
+        resultExportError: archived.resultExportError,
+        workspaceSummary: archived.workspaceSummary,
+        tokenUsage: archived.tokenUsage,
+        healthFlags: archived.resultExportError === null
+          ? attempt.healthFlags
+          : [...new Set([...attempt.healthFlags, 'RESULT_EXPORT_FAILED'])],
       })
     }
     if (attempt.finalizationStage === 'ARCHIVE_RESOLVED') {
@@ -381,7 +388,16 @@ export class Scheduler {
       })
       const projection = this.store.getExperimentRequired(experiment.experimentId)
       await this.archive.writeProjection(projection)
-      if (projection.lifecycleState === 'SETTLED') await this.seal(projection)
+      if (projection.lifecycleState === 'SETTLED') {
+        try {
+          await this.archive.exportComparison(projection)
+        } catch (error) {
+          this.store.appendEvent(projection.experimentId, null, 'RESULT_EXPORT_FAILED', {
+            error: normalizeError(error, 'result-export'),
+          })
+        }
+        await this.seal(this.store.getExperimentRequired(projection.experimentId))
+      }
       if (prepared === null && !recoveredSandboxCleaned) {
         await this.executor.cleanupRuntime(cleanupRuntime).catch(() => undefined)
       }

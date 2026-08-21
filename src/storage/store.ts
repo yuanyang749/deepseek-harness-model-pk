@@ -22,7 +22,7 @@ import type {
 import { hashCanonical } from '../core/jcs.js'
 import { fail } from '../core/error.js'
 import { assertAttemptTransition, deriveCounts, deriveExperimentOutcome, isTerminalAttemptState } from '../core/state-machine.js'
-import { CONTROL_SCHEMA_SQL, CONTROL_SCHEMA_VERSION } from './schema.js'
+import { ATTEMPTS_V2_MIGRATION_SQL, CONTROL_SCHEMA_SQL, CONTROL_SCHEMA_VERSION } from './schema.js'
 
 type SqlValue = string | number | bigint | Uint8Array | null
 type Bindings = Record<string, SqlValue>
@@ -145,6 +145,7 @@ export class ControlStore {
     chmodSync(dirname(path), 0o700)
     this.db = new DatabaseSync(path)
     this.db.exec(CONTROL_SCHEMA_SQL)
+    this.migrateReusableControlSlots()
     this.db.prepare('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)')
       .run('schema_version', String(CONTROL_SCHEMA_VERSION))
     try { chmodSync(path, 0o600) } catch { /* in-memory databases have no path */ }
@@ -161,6 +162,34 @@ export class ControlStore {
 
   setMeta(key: string, value: string): void {
     this.db.prepare('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)').run(key, value)
+  }
+
+  private migrateReusableControlSlots(): void {
+    const uniqueIndexes = this.db.prepare(`
+      SELECT name FROM pragma_index_list('attempts') WHERE "unique"=1
+    `).all() as { name: string }[]
+    const hasLegacyConstraint = uniqueIndexes.some(index => {
+      const columns = this.db.prepare('SELECT name FROM pragma_index_info(?) ORDER BY seqno')
+        .all(index.name) as { name: string }[]
+      return columns.length === 1 && columns[0]?.name === 'control_slot_id'
+    })
+    if (!hasLegacyConstraint) return
+
+    this.db.exec('PRAGMA foreign_keys = OFF')
+    try {
+      this.db.exec('BEGIN IMMEDIATE')
+      this.db.exec(ATTEMPTS_V2_MIGRATION_SQL)
+      const violations = this.db.prepare('PRAGMA foreign_key_check').all()
+      if (violations.length > 0) {
+        throw new Error(`control schema migration produced ${violations.length} foreign key violation(s)`)
+      }
+      this.db.exec('COMMIT')
+    } catch (error) {
+      try { this.db.exec('ROLLBACK') } catch { /* preserve original migration failure */ }
+      throw error
+    } finally {
+      this.db.exec('PRAGMA foreign_keys = ON')
+    }
   }
 
   transaction<T>(callback: () => T): T {
@@ -257,7 +286,9 @@ export class ControlStore {
 
   getDraft(draftId: UUID): Draft | null {
     const row = this.db.prepare('SELECT body_json FROM drafts WHERE draft_id=?').get(draftId) as { body_json: string } | undefined
-    return row === undefined ? null : parse<Draft>(row.body_json)
+    if (row === undefined) return null
+    const draft = parse<Draft>(row.body_json)
+    return { ...draft, resultRootPath: draft.resultRootPath ?? null }
   }
 
   deleteExpiredDrafts(before: string): number {
@@ -819,7 +850,7 @@ export class ControlStore {
     const rows = this.db.prepare(`
       SELECT body_json FROM attempts WHERE experiment_id=? AND state='QUEUED' ORDER BY queue_seq LIMIT ?
     `).all(experimentId, limit) as unknown as DbAttemptRow[]
-    return rows.map(row => parse<Attempt>(row.body_json))
+    return rows.map(row => normalizeAttempt(parse<Attempt>(row.body_json)))
   }
 
   heldReservationCount(experimentId: UUID): number {
@@ -835,7 +866,7 @@ export class ControlStore {
       WHERE state IN ('PREPARING','DISPATCHING','RUNNING','CANCELLING','RECOVERING','FINALIZING')
       ORDER BY queue_seq
     `).all() as unknown as DbAttemptRow[]
-    return rows.map(row => parse<Attempt>(row.body_json))
+    return rows.map(row => normalizeAttempt(parse<Attempt>(row.body_json)))
   }
 
   attemptsInState(states: readonly AttemptState[]): Attempt[] {
@@ -843,7 +874,7 @@ export class ControlStore {
     const placeholders = states.map(() => '?').join(',')
     const rows = this.db.prepare(`SELECT body_json FROM attempts WHERE state IN (${placeholders}) ORDER BY queue_seq`)
       .all(...states) as unknown as DbAttemptRow[]
-    return rows.map(row => parse<Attempt>(row.body_json))
+    return rows.map(row => normalizeAttempt(parse<Attempt>(row.body_json)))
   }
 
   capacitySlotForAttempt(attemptId: UUID): { slotId: string; path: string; generation: number; byteLength: number } {
@@ -938,7 +969,9 @@ export class ControlStore {
 
   getAttempt(attemptId: UUID): Attempt | null {
     const row = this.db.prepare('SELECT body_json FROM attempts WHERE attempt_id=?').get(attemptId) as DbAttemptRow | undefined
-    return row === undefined ? null : parse<Attempt>(row.body_json)
+    if (row === undefined) return null
+    const attempt = parse<Attempt>(row.body_json)
+    return normalizeAttempt(attempt)
   }
 
   getAttemptRequired(attemptId: UUID): Attempt {
@@ -950,12 +983,16 @@ export class ControlStore {
   getExperiment(experimentId: UUID): ExperimentProjection | null {
     const row = this.db.prepare('SELECT * FROM experiments WHERE experiment_id=?').get(experimentId) as DbExperimentRow | undefined
     if (row === undefined) return null
-    const base = parse<Experiment>(row.body_json)
+    const parsedExperiment = parse<Experiment>(row.body_json)
+    const base = { ...parsedExperiment, resultPath: parsedExperiment.resultPath ?? null }
     const runRows = this.db.prepare('SELECT * FROM runs WHERE experiment_id=? ORDER BY ordinal').all(experimentId) as unknown as DbRunRow[]
     const runs: Run[] = runRows.map(runRow => {
       const runBase = parse<Run>(runRow.body_json)
       const attempts = (this.db.prepare('SELECT body_json FROM attempts WHERE run_id=? ORDER BY attempt_no').all(runRow.run_id) as unknown as DbAttemptRow[])
-        .map(attemptRow => parse<Attempt>(attemptRow.body_json))
+        .map(attemptRow => {
+          const attempt = parse<Attempt>(attemptRow.body_json)
+          return normalizeAttempt(attempt)
+        })
       return {
         ...runBase,
         latestAttemptId: runRow.latest_attempt_id,
@@ -1016,7 +1053,8 @@ export class ControlStore {
       FROM experiments WHERE lifecycle_state IN ('START_FAILED','SETTLED') ORDER BY created_at DESC
     `).all() as Pick<DbExperimentRow, 'experiment_id' | 'lifecycle_state' | 'outcome' | 'body_json' | 'experiment_path' | 'created_at' | 'settled_at'>[]
     return rows.map(row => {
-      const base = parse<Experiment>(row.body_json)
+      const parsedExperiment = parse<Experiment>(row.body_json)
+      const base = { ...parsedExperiment, resultPath: parsedExperiment.resultPath ?? null }
       const action = this.db.prepare("SELECT 1 AS present FROM actions WHERE experiment_id=? AND state='PENDING' LIMIT 1")
         .get(row.experiment_id) as { present: number } | undefined
       const canDelete = row.lifecycle_state === 'SETTLED' && action === undefined
@@ -1029,6 +1067,7 @@ export class ControlStore {
         settledAt: row.settled_at,
         byteLength: 0,
         experimentPath: row.experiment_path,
+        resultPath: base.resultPath,
         canDelete,
         blockedReason: canDelete ? null : '仅可删除已结束且没有进行中操作的实验',
       }
@@ -1191,4 +1230,14 @@ function validateAttemptTerminalInvariant(attempt: Attempt): void {
 
 function isPresent<T>(value: T | undefined): value is T {
   return value !== undefined
+}
+
+function normalizeAttempt(attempt: Attempt): Attempt {
+  return {
+    ...attempt,
+    resultPath: attempt.resultPath ?? null,
+    resultExportError: attempt.resultExportError ?? null,
+    workspaceSummary: attempt.workspaceSummary ?? null,
+    tokenUsage: attempt.tokenUsage ?? null,
+  }
 }

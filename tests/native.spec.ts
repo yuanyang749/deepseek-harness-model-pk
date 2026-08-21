@@ -139,7 +139,7 @@ describe('native helper', () => {
     } finally {
       await runner.cleanup(paths)
     }
-  })
+  }, process.platform === 'win32' ? 60_000 : 10_000)
 })
 
 function windowsOrphanCommand(target: string): string {

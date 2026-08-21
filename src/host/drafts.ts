@@ -10,6 +10,7 @@ import type {
   DraftCreateRequest,
   DraftUpdateRequest,
   Hash,
+  ResultRootSelectRequest,
   UUID,
 } from '../contracts/types.js'
 import { LIMITS } from '../contracts/constants.js'
@@ -51,6 +52,7 @@ export class DraftService {
       selectedModelConfigIds: [],
       attachments: [],
       baseline: null,
+      resultRootPath: null,
       concurrency: 1,
       createdAt: now,
       updatedAt: now,
@@ -282,6 +284,49 @@ export class DraftService {
     const committed = this.store.putDraft(next, draft.revision)
     if (draft.baseline !== null) await rm(dirname(draft.baseline.manifestPath), { recursive: true, force: true }).catch(() => undefined)
     return committed
+  }
+
+  async selectResultRoot(request: ResultRootSelectRequest): Promise<Draft> {
+    return this.withDraftLock(request.draftId, () => this.selectResultRootUnlocked(request))
+  }
+
+  private async selectResultRootUnlocked(request: ResultRootSelectRequest): Promise<Draft> {
+    const draft = this.get(request.draftId)
+    assertDraftRevision(draft, request.expectedRevision)
+    const rootPath = await realpath(resolve(request.rootPath))
+    if (pathsOverlap(rootPath, this.archive.layout.root)) {
+      fail('VALIDATION_ERROR', 'result-root', '结果输出目录不能位于 Model PK 内部数据目录', `result/data-root overlap: ${rootPath}`)
+    }
+    const probePath = join(rootPath, `.model-pk-write-probe-${process.pid}-${uuid()}`)
+    let handle: Awaited<ReturnType<typeof open>> | null = null
+    try {
+      handle = await open(probePath, 'wx', 0o600)
+      await handle.sync()
+    } catch (error) {
+      fail('WORKSPACE_NOT_READABLE', 'result-root', '结果输出目录不可写', error instanceof Error ? error.message : String(error))
+    } finally {
+      await handle?.close().catch(() => undefined)
+      await rm(probePath, { force: true }).catch(() => undefined)
+    }
+    return this.store.putDraft({
+      ...draft,
+      revision: draft.revision + 1,
+      resultRootPath: rootPath,
+      updatedAt: new Date().toISOString(),
+    }, draft.revision)
+  }
+
+  clearResultRoot(draftId: UUID, expectedRevision: number): Promise<Draft> {
+    return this.withDraftLock(draftId, () => {
+      const draft = this.get(draftId)
+      assertDraftRevision(draft, expectedRevision)
+      return this.store.putDraft({
+        ...draft,
+        revision: draft.revision + 1,
+        resultRootPath: null,
+        updatedAt: new Date().toISOString(),
+      }, draft.revision)
+    })
   }
 
   async cleanupExpired(): Promise<void> {

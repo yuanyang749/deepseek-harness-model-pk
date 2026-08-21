@@ -1,4 +1,59 @@
-export const CONTROL_SCHEMA_VERSION = 1
+export const CONTROL_SCHEMA_VERSION = 2
+
+function attemptsTableSql(tableName: 'attempts' | 'attempts_v2', ifNotExists: boolean): string {
+  return `
+CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
+  attempt_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+  attempt_no INTEGER NOT NULL CHECK(attempt_no >= 1),
+  trigger TEXT NOT NULL CHECK(trigger IN ('INITIAL', 'RETRY', 'RUN_AGAIN', 'RETRY_FAILED')),
+  batch_action_id TEXT,
+  state TEXT NOT NULL,
+  lifecycle_version INTEGER NOT NULL DEFAULT 0,
+  queue_seq INTEGER NOT NULL UNIQUE,
+  dsh_session_id TEXT UNIQUE,
+  dispatch_intent_id TEXT UNIQUE,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  finalization_id TEXT UNIQUE,
+  finalization_stage TEXT,
+  execution_lease_id TEXT NOT NULL UNIQUE,
+  fencing_token TEXT NOT NULL UNIQUE,
+  reservation_state TEXT NOT NULL CHECK(reservation_state IN ('NOT_ACQUIRED', 'HELD', 'RELEASED', 'ORPHANED')),
+  control_slot_id TEXT NOT NULL REFERENCES capacity_slots(slot_id),
+  body_json TEXT NOT NULL,
+  queued_at TEXT NOT NULL,
+  finalized_at TEXT,
+  FOREIGN KEY(batch_action_id) REFERENCES actions(action_id),
+  UNIQUE(run_id, attempt_no)
+) STRICT;
+`
+}
+
+const ATTEMPT_INDEX_SQL = `
+CREATE UNIQUE INDEX IF NOT EXISTS one_nonterminal_attempt_per_run
+  ON attempts(run_id) WHERE state IN ('QUEUED','PREPARING','DISPATCHING','RUNNING','RECOVERING','CANCELLING','FINALIZING');
+CREATE INDEX IF NOT EXISTS attempt_fifo ON attempts(state, queue_seq);
+CREATE INDEX IF NOT EXISTS attempt_by_experiment ON attempts(experiment_id, queue_seq);
+CREATE INDEX IF NOT EXISTS attempt_by_control_slot ON attempts(control_slot_id);
+`
+
+export const ATTEMPTS_V2_MIGRATION_SQL = `
+${attemptsTableSql('attempts_v2', false)}
+INSERT INTO attempts_v2(
+  attempt_id,run_id,experiment_id,attempt_no,trigger,batch_action_id,state,lifecycle_version,
+  queue_seq,dsh_session_id,dispatch_intent_id,idempotency_key,finalization_id,finalization_stage,
+  execution_lease_id,fencing_token,reservation_state,control_slot_id,body_json,queued_at,finalized_at
+)
+SELECT
+  attempt_id,run_id,experiment_id,attempt_no,trigger,batch_action_id,state,lifecycle_version,
+  queue_seq,dsh_session_id,dispatch_intent_id,idempotency_key,finalization_id,finalization_stage,
+  execution_lease_id,fencing_token,reservation_state,control_slot_id,body_json,queued_at,finalized_at
+FROM attempts;
+DROP TABLE attempts;
+ALTER TABLE attempts_v2 RENAME TO attempts;
+${ATTEMPT_INDEX_SQL}
+`
 
 export const CONTROL_SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;
@@ -96,35 +151,8 @@ CREATE TABLE IF NOT EXISTS runs (
   UNIQUE(experiment_id, model_config_id)
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS attempts (
-  attempt_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-  experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
-  attempt_no INTEGER NOT NULL CHECK(attempt_no >= 1),
-  trigger TEXT NOT NULL CHECK(trigger IN ('INITIAL', 'RETRY', 'RUN_AGAIN', 'RETRY_FAILED')),
-  batch_action_id TEXT,
-  state TEXT NOT NULL,
-  lifecycle_version INTEGER NOT NULL DEFAULT 0,
-  queue_seq INTEGER NOT NULL UNIQUE,
-  dsh_session_id TEXT UNIQUE,
-  dispatch_intent_id TEXT UNIQUE,
-  idempotency_key TEXT NOT NULL UNIQUE,
-  finalization_id TEXT UNIQUE,
-  finalization_stage TEXT,
-  execution_lease_id TEXT NOT NULL UNIQUE,
-  fencing_token TEXT NOT NULL UNIQUE,
-  reservation_state TEXT NOT NULL CHECK(reservation_state IN ('NOT_ACQUIRED', 'HELD', 'RELEASED', 'ORPHANED')),
-  control_slot_id TEXT NOT NULL UNIQUE REFERENCES capacity_slots(slot_id),
-  body_json TEXT NOT NULL,
-  queued_at TEXT NOT NULL,
-  finalized_at TEXT,
-  FOREIGN KEY(batch_action_id) REFERENCES actions(action_id),
-  UNIQUE(run_id, attempt_no)
-) STRICT;
-CREATE UNIQUE INDEX IF NOT EXISTS one_nonterminal_attempt_per_run
-  ON attempts(run_id) WHERE state IN ('QUEUED','PREPARING','DISPATCHING','RUNNING','RECOVERING','CANCELLING','FINALIZING');
-CREATE INDEX IF NOT EXISTS attempt_fifo ON attempts(state, queue_seq);
-CREATE INDEX IF NOT EXISTS attempt_by_experiment ON attempts(experiment_id, queue_seq);
+${attemptsTableSql('attempts', true)}
+${ATTEMPT_INDEX_SQL}
 
 CREATE TABLE IF NOT EXISTS actions (
   action_id TEXT PRIMARY KEY,
@@ -182,4 +210,3 @@ CREATE TABLE IF NOT EXISTS deletion_receipts (
   receipt_json TEXT NOT NULL
 ) STRICT;
 `
-

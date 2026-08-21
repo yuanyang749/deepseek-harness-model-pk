@@ -36,6 +36,7 @@ export interface CreateExperimentDefinitionInput {
   readonly experimentPath: string
   readonly now?: string
   readonly experimentId?: UUID
+  readonly resultPath?: string | null
   readonly firstQueueSeq: number
 }
 
@@ -79,6 +80,7 @@ export function createExperimentDefinition(input: CreateExperimentDefinitionInpu
     dshVersion: DSH_VERSION,
     pluginVersion: PLUGIN_VERSION,
     experimentPath: input.experimentPath,
+    resultPath: input.resultPath ?? null,
     runs: [],
     createdAt: now,
     frozenAt: now,
@@ -189,6 +191,10 @@ export function createAttempt(input: CreateAttemptInput): Attempt {
     workspaceSealState: 'OPEN',
     workspacePath: null,
     artifactPath: null,
+    resultPath: null,
+    resultExportError: null,
+    workspaceSummary: null,
+    tokenUsage: null,
     finalResponse: null,
     outputPreview: '',
     archiveCompleteness: 'INCOMPLETE',
@@ -198,4 +204,3 @@ export function createAttempt(input: CreateAttemptInput): Attempt {
     healthFlags: [],
   }
 }
-
