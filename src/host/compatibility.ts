@@ -1,11 +1,12 @@
 import { createServer } from 'node:net'
-import { link, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DSH_COMMIT, DSH_VERSION, LIMITS, PLUGIN_VERSION } from '../contracts/constants.js'
 import type { CapabilityReport, ModelPkError } from '../contracts/types.js'
 import { modelPkError, normalizeError } from '../core/error.js'
 import type { NativeHelper } from '../native/helper.js'
-import { createIsolationFixture, type SeatbeltRunner } from '../native/seatbelt.js'
+import { createIsolationFixture, type SandboxRunner } from '../native/sandbox.js'
 import type { DataLayout } from './archive.js'
 
 export interface HostRuntimeIdentity {
@@ -33,7 +34,7 @@ export class CompatibilityGate {
     private readonly identity: HostRuntimeIdentity,
     private readonly layout: DataLayout,
     private readonly helper: NativeHelper,
-    private readonly seatbelt: SeatbeltRunner,
+    private readonly sandbox: SandboxRunner,
   ) {}
 
   async run(probes: CompatibilityProbes = {}): Promise<CompatibilityEvidence> {
@@ -70,8 +71,14 @@ export class CompatibilityGate {
       if (this.helper.probe.version.version !== PLUGIN_VERSION || this.helper.probe.version.protocolVersion !== 1) throw new Error('native helper protocol mismatch')
     })
     await check('native-capacity-slot', '物理控制 slot 可预分配并双缓冲校验', () => this.proveCapacitySlot())
-    await check('native-nofollow', 'fd-relative no-follow 拒绝 symlink 与 hardlink', () => this.proveNoFollow())
-    await check('isolation-seatbelt', 'Seatbelt 拒绝兄弟读取、共享 temp、网络与秘密环境', () => this.proveSeatbelt())
+    await check(
+      'native-nofollow',
+      process.platform === 'win32'
+        ? '原生 no-follow 拒绝 reparse point、hardlink 与 Windows ADS'
+        : '原生 no-follow 拒绝 symlink 与 hardlink',
+      () => this.proveNoFollow(),
+    )
+    await check('isolation-sandbox', `${sandboxEngineName()} 允许 Attempt workspace 且拒绝兄弟读取、共享 temp、网络、秘密环境与孤儿进程`, () => this.proveSandbox())
     if (probes.modelSnapshot !== undefined) await check('model-snapshot', '模型与非敏感 Provider 配置可冻结并重新解析', probes.modelSnapshot)
     else {
       const error = modelPkError('MODEL_CONFIG_NOT_FOUND', 'compatibility:model-snapshot', '没有可用于冻结验证的受支持模型', 'model snapshot probe was not supplied')
@@ -129,58 +136,148 @@ export class CompatibilityGate {
   private async proveNoFollow(): Promise<void> {
     const root = join(this.layout.control, 'compatibility-nofollow')
     await rm(root, { recursive: true, force: true })
-    await mkdir(join(root, 'tree'), { recursive: true, mode: 0o700 })
-    await writeFile(join(root, 'outside'), 'secret', { mode: 0o600 })
-    await symlink(join(root, 'outside'), join(root, 'tree', 'symlink'))
-    let symlinkRejected = false
-    try { await this.helper.scan(join(root, 'tree'), 1024, 10) } catch { symlinkRejected = true }
-    await rm(join(root, 'tree', 'symlink'))
-    await link(join(root, 'outside'), join(root, 'tree', 'hardlink'))
-    let hardlinkRejected = false
-    try { await this.helper.scan(join(root, 'tree'), 1024, 10) } catch { hardlinkRejected = true }
-    await rm(root, { recursive: true, force: true })
-    if (!symlinkRejected || !hardlinkRejected) throw new Error(`nofollow proof failed: symlink=${symlinkRejected}; hardlink=${hardlinkRejected}`)
+    try {
+      const tree = join(root, 'tree')
+      const outsideFile = join(root, 'outside')
+      await mkdir(tree, { recursive: true, mode: 0o700 })
+      await writeFile(outsideFile, 'secret', { mode: 0o600 })
+      if (process.platform === 'win32') {
+        const outsideDirectory = join(root, 'outside-directory')
+        await mkdir(outsideDirectory, { mode: 0o700 })
+        await writeFile(join(outsideDirectory, 'secret'), 'secret', { mode: 0o600 })
+        await symlink(outsideDirectory, join(tree, 'reparse'), 'junction')
+      } else {
+        await symlink(outsideFile, join(tree, 'reparse'))
+      }
+      let reparseRejected = false
+      try { await this.helper.scan(tree, 1024, 10) } catch { reparseRejected = true }
+      await unlink(join(tree, 'reparse'))
+      await link(outsideFile, join(tree, 'hardlink'))
+      let hardlinkRejected = false
+      try { await this.helper.scan(tree, 1024, 10) } catch { hardlinkRejected = true }
+      if (!reparseRejected || !hardlinkRejected) {
+        throw new Error(`nofollow proof failed: reparse=${reparseRejected}; hardlink=${hardlinkRejected}`)
+      }
+      if (process.platform === 'win32') {
+        await unlink(join(tree, 'hardlink'))
+        const streamFile = join(tree, 'stream-file')
+        await writeFile(streamFile, 'plain', { mode: 0o600 })
+        let streamCreated = true
+        try { await writeFile(`${streamFile}:model-pk-hidden`, 'hidden') } catch { streamCreated = false }
+        if (streamCreated) {
+          let streamRejected = false
+          try { await this.helper.scan(tree, 1024, 10) } catch { streamRejected = true }
+          if (!streamRejected) throw new Error('nofollow proof accepted a Windows alternate data stream')
+        }
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   }
 
-  private async proveSeatbelt(): Promise<void> {
-    if (!(await this.seatbelt.available())) throw new Error('sandbox-exec unavailable')
-    const root = join(this.layout.control, 'compatibility-seatbelt')
+  private async proveSandbox(): Promise<void> {
+    if (!(await this.sandbox.available())) throw new Error(`${sandboxEngineName()} unavailable`)
+    const root = join(this.layout.control, 'compatibility-sandbox')
     await rm(root, { recursive: true, force: true })
     const attemptRoot = join(root, 'attempt')
     const paths = await createIsolationFixture(attemptRoot)
     const sibling = join(root, 'sibling-secret')
-    const sharedTemp = `/tmp/model-pk-${process.pid}-${Date.now()}`
+    const sharedTemp = join(tmpdir(), `model-pk-${process.pid}-${Date.now()}`)
     const secret = `secret-${Date.now()}`
     await writeFile(sibling, secret, { mode: 0o600 })
-    const readAttempt = await this.seatbelt.run(paths, `/bin/cat ${shellQuote(sibling)}`, { timeoutMs: 5_000 })
-    if (readAttempt.exitCode === 0 || readAttempt.stdout.includes(secret)) throw new Error('sandbox read sibling file')
-    const tempAttempt = await this.seatbelt.run(paths, `/usr/bin/touch ${shellQuote(sharedTemp)}`, { timeoutMs: 5_000 })
-    if (tempAttempt.exitCode === 0) throw new Error('sandbox wrote shared temp')
-    const envAttempt = await this.seatbelt.run(paths, '/usr/bin/env', { timeoutMs: 5_000 })
-    if (envAttempt.stdout.includes('MODEL_PK_COMPAT_SECRET')) throw new Error('sandbox inherited secret environment')
-    const server = createServer(socket => socket.end())
-    await new Promise<void>((resolvePromise, rejectPromise) => {
-      server.once('error', rejectPromise)
-      server.listen(0, '127.0.0.1', () => resolvePromise())
-    })
     try {
-      const address = server.address()
-      if (address === null || typeof address === 'string') throw new Error('network probe address unavailable')
-      const networkAttempt = await this.seatbelt.run(paths, `/usr/bin/nc -z 127.0.0.1 ${address.port}`, { timeoutMs: 5_000 })
-      if (networkAttempt.exitCode === 0) throw new Error('sandbox reached loopback network')
+      await this.sandbox.prepare(paths)
+      const allowedTarget = join(paths.workspace, 'sandbox-write-proof')
+      const allowedCommand = process.platform === 'win32'
+        ? powershellTry(`[IO.File]::WriteAllText(${powershellQuote(allowedTarget)}, 'allowed')`)
+        : `/bin/echo allowed > ${shellQuote(allowedTarget)}`
+      const allowedAttempt = await this.sandbox.run(paths, allowedCommand, { timeoutMs: 5_000 })
+      const allowedContent = await readFile(allowedTarget, 'utf8').catch(() => '')
+      if (allowedAttempt.exitCode !== 0 || allowedContent.trim() !== 'allowed') {
+        throw new Error('sandbox could not write its workspace')
+      }
+      const readCommand = process.platform === 'win32'
+        ? powershellTry(`[Console]::Out.Write([IO.File]::ReadAllText(${powershellQuote(sibling)}))`)
+        : `/bin/cat ${shellQuote(sibling)}`
+      const readAttempt = await this.sandbox.run(paths, readCommand, { timeoutMs: 5_000 })
+      if (readAttempt.exitCode === 0 || readAttempt.stdout.includes(secret)) throw new Error('sandbox read sibling file')
+      const tempCommand = process.platform === 'win32'
+        ? powershellTry(`[IO.File]::WriteAllText(${powershellQuote(sharedTemp)}, 'leak')`)
+        : `/usr/bin/touch ${shellQuote(sharedTemp)}`
+      const tempAttempt = await this.sandbox.run(paths, tempCommand, { timeoutMs: 5_000 })
+      if (tempAttempt.exitCode === 0) throw new Error('sandbox wrote shared temp')
+      const envCommand = process.platform === 'win32'
+        ? 'Get-ChildItem Env: | ForEach-Object { "$($_.Name)=$($_.Value)" }'
+        : '/usr/bin/env'
+      const previousSecret = process.env.MODEL_PK_COMPAT_SECRET
+      process.env.MODEL_PK_COMPAT_SECRET = secret
+      let envAttempt: { readonly stdout: string }
+      try {
+        envAttempt = await this.sandbox.run(paths, envCommand, { timeoutMs: 5_000 })
+      } finally {
+        if (previousSecret === undefined) delete process.env.MODEL_PK_COMPAT_SECRET
+        else process.env.MODEL_PK_COMPAT_SECRET = previousSecret
+      }
+      if (envAttempt.stdout.includes('MODEL_PK_COMPAT_SECRET')) throw new Error('sandbox inherited secret environment')
+
+      const server = createServer(socket => socket.end())
+      await new Promise<void>((resolvePromise, rejectPromise) => {
+        server.once('error', rejectPromise)
+        server.listen(0, '127.0.0.1', () => resolvePromise())
+      })
+      try {
+        const address = server.address()
+        if (address === null || typeof address === 'string') throw new Error('network probe address unavailable')
+        const networkCommand = process.platform === 'win32'
+          ? powershellTry(`$client = [Net.Sockets.TcpClient]::new(); $client.Connect('127.0.0.1', ${address.port}); $client.Dispose()`)
+          : `/usr/bin/nc -z 127.0.0.1 ${address.port}`
+        const networkAttempt = await this.sandbox.run(paths, networkCommand, { timeoutMs: 5_000 })
+        if (networkAttempt.exitCode === 0) throw new Error('sandbox reached loopback network')
+      } finally {
+        await new Promise<void>(resolvePromise => server.close(() => resolvePromise()))
+      }
+
+      const orphanTarget = join(paths.workspace, 'orphan-leak')
+      const orphanCommand = process.platform === 'win32'
+        ? windowsOrphanCommand(orphanTarget)
+        : `(/bin/sleep 1; /bin/echo leaked > ${shellQuote(orphanTarget)}) & exit 0`
+      const orphanAttempt = await this.sandbox.run(paths, orphanCommand, { timeoutMs: 4_000 })
+      if (process.platform === 'win32' && (orphanAttempt.exitCode !== 0
+        || !orphanAttempt.stdout.includes('spawned:'))) {
+        throw new Error('sandbox could not launch the orphan-process probe')
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1200))
+      const leaked = await readFile(orphanTarget, 'utf8').catch(() => '')
+      if (leaked.length > 0) throw new Error('sandbox left an orphan process running')
     } finally {
-      await new Promise<void>(resolvePromise => server.close(() => resolvePromise()))
+      try {
+        await this.sandbox.cleanup(paths)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+        await rm(sharedTemp, { force: true })
+      }
     }
-    const orphanTarget = join(paths.workspace, 'orphan-leak')
-    await this.seatbelt.run(paths, `(/bin/sleep 1; /bin/cat ${shellQuote(sibling)} > ${shellQuote(orphanTarget)}) & exit 0`, { timeoutMs: 4_000 })
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 1200))
-    const leaked = await readFile(orphanTarget, 'utf8').catch(() => '')
-    await rm(root, { recursive: true, force: true })
-    await rm(sharedTemp, { force: true })
-    if (leaked.includes(secret)) throw new Error('orphan read sibling file')
   }
 }
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+function powershellQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+function powershellTry(body: string): string {
+  return `$ErrorActionPreference = 'Stop'; try { ${body}; exit 0 } catch { [Console]::Error.Write($_.Exception.Message); exit 1 }`
+}
+
+function windowsOrphanCommand(target: string): string {
+  const childScript = `Start-Sleep -Seconds 1; [IO.File]::WriteAllText(${powershellQuote(target)}, 'leaked')`
+  const encoded = Buffer.from(childScript, 'utf16le').toString('base64')
+  return `$ErrorActionPreference = 'Stop'; $shell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $child = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', '${encoded}') -PassThru; Write-Output "spawned:$($child.Id)"`
+}
+
+function sandboxEngineName(): string {
+  return process.platform === 'win32' ? 'Windows AppContainer/Job Object' : 'macOS Seatbelt'
 }

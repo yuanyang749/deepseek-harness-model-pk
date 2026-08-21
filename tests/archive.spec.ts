@@ -6,7 +6,7 @@ import type { Attempt, AuditEvent, ExperimentProjection, Run } from '../src/cont
 import { uuid } from '../src/core/ids.js'
 import { createExperimentDefinition } from '../src/domain/factory.js'
 import { ArchiveManager, dataLayout } from '../src/host/archive.js'
-import { NativeHelper } from '../src/native/helper.js'
+import { NativeHelper, nativeExecutableName } from '../src/native/helper.js'
 import { fixturePreflight } from './fixtures.js'
 
 let helper: NativeHelper
@@ -14,7 +14,7 @@ let root: string
 
 beforeAll(async () => {
   helper = await NativeHelper.locate({
-    explicitPath: resolve('native/model-pk-helper/target/debug/model-pk-helper'),
+    explicitPath: resolve('native', 'model-pk-helper', 'target', 'debug', nativeExecutableName(process.platform)),
     allowDevBinary: true,
   })
   root = await realpath(await mkdtemp(join(tmpdir(), 'model-pk-archive-')))
@@ -30,7 +30,7 @@ describe('self-contained archive', () => {
     try {
       const canonicalRoot = await realpath(rawRoot)
       const archive = new ArchiveManager(dataLayout(join(rawRoot, 'dsh-home')), helper)
-      expect(archive.layout.root).toBe(join(canonicalRoot, 'dsh-home/model-pk/v1'))
+      expect(archive.layout.root).toBe(join(canonicalRoot, 'dsh-home', 'model-pk', 'v1'))
       await archive.initialize()
       const source = join(archive.layout.runtime, 'fixture-workspace')
       const objects = join(archive.layout.experiments, 'fixture-objects')
@@ -70,7 +70,7 @@ describe('self-contained archive', () => {
       const runtime = await archive.createAttemptRuntime(definition.experiment, run, initial)
       await writeFile(join(runtime.workspace, `answer-${run.ordinal}.txt`), `workspace-${run.ordinal}\n`)
       await mkdir(join(runtime.artifacts, 'reports'), { recursive: true })
-      await writeFile(join(runtime.artifacts, 'reports/result.json'), JSON.stringify({ ordinal: run.ordinal }))
+      await writeFile(join(runtime.artifacts, 'reports', 'result.json'), JSON.stringify({ ordinal: run.ordinal }))
       await archive.appendTranscript(runtime, { type: 'assistant/message', ordinal: run.ordinal })
       await archive.appendLog(runtime, { level: 'info', message: 'fixture' })
       await archive.appendAttemptEvent(runtime, { kind: 'FIXTURE_PROGRESS' })

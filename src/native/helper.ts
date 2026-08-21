@@ -49,6 +49,24 @@ export interface NativeHelperProbe {
   readonly version: NativeVersion
 }
 
+export interface NativeSandboxPaths {
+  readonly attemptRoot: string
+  readonly workspace: string
+  readonly home: string
+  readonly temp: string
+}
+
+export interface NativeSandboxRunResult {
+  readonly exitCode: number | null
+  readonly signal: null
+  readonly stdout: string
+  readonly stderr: string
+  readonly timedOut: boolean
+  readonly truncated: boolean
+}
+
+const SANDBOX_ACL_TIMEOUT_MS = 10 * 60 * 1000
+
 export class NativeHelper {
   private constructor(readonly probe: NativeHelperProbe) {}
 
@@ -64,28 +82,29 @@ export class NativeHelper {
     const candidates: { path: string; expectedHash?: string }[] = []
     if (options.explicitPath !== undefined) candidates.push({ path: resolve(options.explicitPath) })
     if (process.env.MODEL_PK_HELPER !== undefined) candidates.push({ path: resolve(process.env.MODEL_PK_HELPER) })
-    const packageName = process.arch === 'arm64'
-      ? '@model-pk/native-darwin-arm64'
-      : '@model-pk/native-darwin-x64'
-    try {
-      const require = createRequire(import.meta.url)
-      const packageJsonPath = require.resolve(`${packageName}/package.json`)
-      const manifest = JSON.parse(await readFile(join(dirname(packageJsonPath), 'manifest.json'), 'utf8')) as { sha256?: unknown }
-      candidates.push({
-        path: join(dirname(packageJsonPath), 'bin/model-pk-helper'),
-        ...(typeof manifest.sha256 === 'string' && manifest.sha256 !== 'UNBUILT' ? { expectedHash: manifest.sha256 } : {}),
-      })
-    } catch { /* optional package absent */ }
+    const packageName = nativePackageName(process.platform, process.arch)
+    if (packageName !== null) {
+      try {
+        const require = createRequire(import.meta.url)
+        const packageJsonPath = require.resolve(`${packageName}/package.json`)
+        const manifest = JSON.parse(await readFile(join(dirname(packageJsonPath), 'manifest.json'), 'utf8')) as { sha256?: unknown }
+        candidates.push({
+          path: join(dirname(packageJsonPath), 'bin', nativeExecutableName(process.platform)),
+          ...(typeof manifest.sha256 === 'string' && manifest.sha256 !== 'UNBUILT' ? { expectedHash: manifest.sha256 } : {}),
+        })
+      } catch { /* optional package absent */ }
+    }
     if (options.allowDevBinary ?? process.env.NODE_ENV !== 'production') {
       const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-      candidates.push({ path: join(packageRoot, 'native/model-pk-helper/target/debug/model-pk-helper') })
-      candidates.push({ path: join(packageRoot, 'native/model-pk-helper/target/release/model-pk-helper') })
-      candidates.push({ path: resolve('native/model-pk-helper/target/debug/model-pk-helper') })
-      candidates.push({ path: resolve('native/model-pk-helper/target/release/model-pk-helper') })
+      const executable = nativeExecutableName(process.platform)
+      candidates.push({ path: join(packageRoot, 'native', 'model-pk-helper', 'target', 'debug', executable) })
+      candidates.push({ path: join(packageRoot, 'native', 'model-pk-helper', 'target', 'release', executable) })
+      candidates.push({ path: resolve('native', 'model-pk-helper', 'target', 'debug', executable) })
+      candidates.push({ path: resolve('native', 'model-pk-helper', 'target', 'release', executable) })
     }
     for (const candidate of candidates) {
       try {
-        await access(candidate.path, fsConstants.X_OK)
+        await access(candidate.path, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK)
         const bytes = await readFile(candidate.path)
         const digest = createHash('sha256').update(bytes).digest('hex')
         if (candidate.expectedHash !== undefined && candidate.expectedHash !== digest) continue
@@ -186,12 +205,51 @@ export class NativeHelper {
     return this.call({ command: 'slot-read', path })
   }
 
-  private call<T>(request: Readonly<Record<string, unknown>>, timeoutMs = 120_000): Promise<T> {
+  async prepareSandbox(paths: NativeSandboxPaths): Promise<void> {
+    await this.call({
+      command: 'sandbox-prepare',
+      attempt_root: paths.attemptRoot,
+      writable_roots: [paths.workspace, paths.home, paths.temp],
+    }, { timeoutMs: SANDBOX_ACL_TIMEOUT_MS })
+  }
+
+  async runSandbox(
+    paths: NativeSandboxPaths,
+    commandText: string,
+    options: { readonly signal?: AbortSignal; readonly timeoutMs: number; readonly outputLimit: number },
+  ): Promise<NativeSandboxRunResult> {
+    return this.call({
+      command: 'sandbox-run',
+      attempt_root: paths.attemptRoot,
+      workspace: paths.workspace,
+      home: paths.home,
+      temp: paths.temp,
+      command_text: commandText,
+      timeout_ms: options.timeoutMs,
+      output_limit: options.outputLimit,
+    }, {
+      timeoutMs: options.timeoutMs + 15_000,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+  }
+
+  async cleanupSandbox(attemptRoot: string): Promise<void> {
+    await this.call({ command: 'sandbox-cleanup', attempt_root: attemptRoot }, { timeoutMs: SANDBOX_ACL_TIMEOUT_MS })
+  }
+
+  private call<T>(
+    request: Readonly<Record<string, unknown>>,
+    options: { readonly timeoutMs?: number; readonly signal?: AbortSignal } = {},
+  ): Promise<T> {
     if (this.probe.path.length === 0) {
       fail('NATIVE_HELPER_UNAVAILABLE', 'native-helper', '原生隔离组件未安装或校验失败', `no valid helper for ${process.platform}/${process.arch}`)
     }
     return new Promise((resolvePromise, rejectPromise) => {
-      const child = spawn(this.probe.path, [], { stdio: ['pipe', 'pipe', 'pipe'], env: {} })
+      const child = spawn(this.probe.path, [], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: nativeHelperEnvironment(),
+        windowsHide: true,
+      })
       const stdout: Buffer[] = []
       const stderr: Buffer[] = []
       let stdoutBytes = 0
@@ -199,11 +257,18 @@ export class NativeHelper {
       const timer = setTimeout(() => {
         child.kill('SIGKILL')
         rejectOnce(new Error('native helper timed out'))
-      }, timeoutMs)
+      }, options.timeoutMs ?? 120_000)
+      const abort = (): void => {
+        child.kill('SIGKILL')
+        const error = new Error('native helper aborted')
+        error.name = 'AbortError'
+        rejectOnce(error)
+      }
       const rejectOnce = (error: Error): void => {
         if (settled) return
         settled = true
         clearTimeout(timer)
+        options.signal?.removeEventListener('abort', abort)
         rejectPromise(error)
       }
       child.stdout.on('data', (chunk: Buffer) => {
@@ -218,10 +283,12 @@ export class NativeHelper {
       child.stderr.on('data', (chunk: Buffer) => {
         if (stderr.reduce((sum, item) => sum + item.byteLength, 0) < 1024 * 1024) stderr.push(chunk)
       })
+      child.stdin.on('error', rejectOnce)
       child.on('error', rejectOnce)
       child.on('close', (code) => {
         if (settled) return
         clearTimeout(timer)
+        options.signal?.removeEventListener('abort', abort)
         try {
           const raw = Buffer.concat(stdout).toString('utf8').trim()
           const response = JSON.parse(raw) as HelperResponse<T>
@@ -235,9 +302,32 @@ export class NativeHelper {
           rejectOnce(error instanceof Error ? error : new Error(String(error)))
         }
       })
-      child.stdin.end(JSON.stringify(request))
+      options.signal?.addEventListener('abort', abort, { once: true })
+      if (options.signal?.aborted === true) abort()
+      else child.stdin.end(JSON.stringify(request))
     })
   }
+}
+
+export function nativePackageName(platform: NodeJS.Platform, arch: string): string | null {
+  if (!['arm64', 'x64'].includes(arch)) return null
+  if (platform === 'darwin') return `@model-pk/native-darwin-${arch}`
+  if (platform === 'win32') return `@model-pk/native-win32-${arch}`
+  return null
+}
+
+export function nativeExecutableName(platform: NodeJS.Platform): string {
+  return platform === 'win32' ? 'model-pk-helper.exe' : 'model-pk-helper'
+}
+
+function nativeHelperEnvironment(): NodeJS.ProcessEnv {
+  if (process.platform !== 'win32') return {}
+  const environment: NodeJS.ProcessEnv = {}
+  for (const name of ['SystemRoot', 'SYSTEMROOT', 'windir', 'WINDIR', 'SystemDrive', 'ComSpec', 'PATHEXT']) {
+    const value = process.env[name]
+    if (value !== undefined) environment[name] = value
+  }
+  return environment
 }
 
 export async function initializeCapacitySlots(

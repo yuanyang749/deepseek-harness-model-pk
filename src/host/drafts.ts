@@ -1,5 +1,5 @@
-import { chmod, copyFile, open, readFile, rm } from 'node:fs/promises'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { chmod, copyFile, open, readFile, realpath, rm } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   AttachmentBeginRequest,
   AttachmentBeginResponse,
@@ -242,7 +242,7 @@ export class DraftService {
   private async selectBaselineUnlocked(request: BaselineSelectRequest): Promise<Draft> {
     const draft = this.get(request.draftId)
     assertDraftRevision(draft, request.expectedRevision)
-    const sourcePath = resolve(request.sourcePath)
+    const sourcePath = await realpath(resolve(request.sourcePath))
     if (pathsOverlap(sourcePath, this.archive.layout.root)) {
       fail('WORKSPACE_NOT_READABLE', 'baseline', 'Baseline 不能包含 Model PK 数据目录', `baseline/data-root overlap: ${sourcePath}`)
     }
@@ -361,6 +361,7 @@ async function publishAttachment(source: string, destination: string, expectedHa
 function pathsOverlap(left: string, right: string): boolean {
   const leftToRight = relative(left, right)
   const rightToLeft = relative(right, left)
+  if (isAbsolute(leftToRight) || isAbsolute(rightToLeft)) return false
   return leftToRight === '' || rightToLeft === ''
     || !leftToRight.startsWith(`..${sep}`) && leftToRight !== '..'
     || !rightToLeft.startsWith(`..${sep}`) && rightToLeft !== '..'

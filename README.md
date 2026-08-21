@@ -10,9 +10,9 @@ Model PK 是 DSH `0.1.0-rc.7` 的本地多模型公平对照插件。它以一�
 - `Stop`、`Stop All`、`Retry`、`Run Again`、原子 `Retry Failed`。
 - Host 崩溃后的 STARTING、执行未知窗口、FINALIZING 和 Seal 收敛。
 - 插件专属 SQLite（`BEGIN IMMEDIATE`、`synchronous=FULL`、CAS、partial unique indexes）。
-- Rust `openat/fstatat/O_NOFOLLOW` 文件边界、内容寻址快照、fencing token、`F_PREALLOCATE` 双缓冲控制 slot。
-- macOS deny-default Seatbelt、private HOME/TMPDIR、无网络、进程组 10 秒取消。
-- 自包含归档、不可变 Seal、Finder 打开和 Durable Delete receipt。
+- Rust 平台原生 no-follow 文件边界（macOS `openat/fstatat`、Windows handle/reparse 检查）、内容寻址快照、fencing token、物理预分配双缓冲控制 slot。
+- macOS deny-default Seatbelt 或 Windows AppContainer；private HOME/TEMP、无网络，并以进程组 / Job Object 收敛整棵子进程树。
+- 自包含归档、不可变 Seal、Finder / Explorer 打开和 Durable Delete receipt。
 
 V1 不包含评分、排名、Judge、Elo、批量 Benchmark 或外部 Agent CLI。
 
@@ -22,6 +22,9 @@ V1 不包含评分、排名、Judge、Elo、批量 Benchmark 或外部 Agent CLI
 - DSH source commit: `99f6f02fecdb7dff40c3fbc9470f5907c29f74ca`
 - Node: `^22.19 || >=24`
 - macOS: arm64 / x64 原生可选包
+- Windows: arm64 / x64 原生可选包
+
+Windows 的运行数据根目录需位于支持 ACL 的本地卷；启动时的 Compatibility Gate 会实际验证 AppContainer 的 workspace 读写与越界拒绝，而不是仅按系统版本放行。
 
 版本、Adapter、图片 wire path、session 新鲜度、隔离、归档和控制容量均由启动时 Compatibility Gate 动态证明；阻断项会保留 UI 查询能力并关闭 Start。
 
@@ -36,7 +39,7 @@ pnpm build:native
 pnpm check
 ```
 
-当前架构的完整自动化检查包含 TypeScript strict typecheck、领域/SQLite/RPC/UI 测试、Rust helper 真实文件系统测试和 macOS Seatbelt hostile-orphan 测试。
+完整自动化检查同时覆盖 macOS 与 Windows：TypeScript strict typecheck、领域/SQLite/RPC/UI 测试、Rust helper 真实文件系统测试，以及 Seatbelt 或 AppContainer/Job Object hostile-orphan 隔离测试。Windows 开发机需要 Rust MSVC toolchain；`pnpm build:native` 会自动产出当前系统/架构的可选包。
 
 ## 安装到 DSH Web Profile
 
@@ -80,7 +83,7 @@ $DSH_HOME/model-pk/v1/
 └── trash/
 ```
 
-目录为 `0700`、文件为 `0600`。Experiment 永久保留，只能在 SETTLED 且没有进行中 Action 时手动删除。
+macOS 使用目录 `0700`、文件 `0600`；Windows 使用用户 ACL 与 Attempt 专属 AppContainer ACL。Experiment 永久保留，只能在 SETTLED 且没有进行中 Action 时手动删除。
 
 ## 关键实现入口
 
@@ -89,6 +92,6 @@ $DSH_HOME/model-pk/v1/
 - 调度与恢复：`src/host/scheduler.ts`
 - SQLite 控制面：`src/storage/store.ts`
 - 固定 Harness：`src/host/harness.ts`
-- 原生 helper：`native/model-pk-helper/src/main.rs`
+- 原生 helper：`native/model-pk-helper/src/{unix,windows}.rs`
 - 正式 UI：`src/client/App.tsx`
 - 兼容与发布证据：`docs/COMPATIBILITY_REPORT.md`

@@ -293,14 +293,22 @@ export class Scheduler {
     if (attempt.state !== 'FINALIZING') return
     const experiment = this.store.getExperimentRequired(this.experimentIdForAttempt(attempt))
     const run = runForAttempt(experiment, attempt)
+    const cleanupRuntime = this.archive.attemptRuntimePaths(experiment.experimentId, attempt.attemptId)
+    let recoveredSandboxCleaned = false
     let runtime: AttemptRuntimePaths | null = attempt.workspacePath === null
       ? null
-      : this.archive.attemptRuntimePaths(experiment.experimentId, attempt.attemptId)
+      : cleanupRuntime
     if (attempt.finalizationStage === 'INTENT_RECORDED') {
       if (runtime !== null) await this.archive.revokeLease(runtime).catch(() => undefined)
       if (prepared !== null) {
         prepared.cancel()
         await prepared.dispose().catch(() => undefined)
+      } else {
+        // A Host crash can leave an AppContainer profile after PREPARING but
+        // before workspacePath is durably published. The runtime path is
+        // deterministic, so recovery can still remove that native identity.
+        recoveredSandboxCleaned = await this.executor.cleanupRuntime(cleanupRuntime)
+          .then(() => true, () => false)
       }
       attempt = this.store.updateAttemptProjection(attempt.attemptId, {
         finalizationStage: 'ISOLATION_RESOLVED',
@@ -374,6 +382,9 @@ export class Scheduler {
       const projection = this.store.getExperimentRequired(experiment.experimentId)
       await this.archive.writeProjection(projection)
       if (projection.lifecycleState === 'SETTLED') await this.seal(projection)
+      if (prepared === null && !recoveredSandboxCleaned) {
+        await this.executor.cleanupRuntime(cleanupRuntime).catch(() => undefined)
+      }
       if (runtime !== null) await rm(runtime.attemptRoot, { recursive: true, force: true })
     }
   }

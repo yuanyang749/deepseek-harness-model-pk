@@ -12,7 +12,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   Attempt,
   AuditEvent,
@@ -24,6 +24,7 @@ import type {
 } from '../contracts/types.js'
 import { canonicalize, hashCanonical, sha256Bytes, sha256File } from '../core/jcs.js'
 import { fail, normalizeError } from '../core/error.js'
+import { sanitizeFileName } from '../core/validation.js'
 import type { NativeHelper, NativeTreeManifest } from '../native/helper.js'
 
 export interface DataLayout {
@@ -66,18 +67,17 @@ export interface FinalizeArchiveResult {
 }
 
 export function dataLayout(dshHome: string): DataLayout {
-  return dataLayoutAtRoot(resolve(dshHome, 'model-pk/v1'))
+  return dataLayoutAtRoot(resolve(dshHome, 'model-pk', 'v1'))
 }
 
 export function dataLayoutAtRoot(inputRoot: string): DataLayout {
-  // macOS exposes /var as a symlink to /private/var. The native helper opens
-  // every ancestor with O_NOFOLLOW, so persist and pass the canonical path,
-  // including when the final Model PK directories do not exist yet.
+  // Resolve existing ancestors before passing paths to the native no-follow
+  // implementation. This handles macOS /var aliases and Windows junctions.
   const root = canonicalPathWithMissingTail(inputRoot)
   return {
     root,
     control: join(root, 'control'),
-    capacity: join(root, 'control/capacity'),
+    capacity: join(root, 'control', 'capacity'),
     drafts: join(root, 'drafts'),
     experiments: join(root, 'experiments'),
     runtime: join(root, 'runtime'),
@@ -119,10 +119,10 @@ export class ArchiveManager {
 
   experimentPath(experimentId: string, name: string, createdAt = new Date()): string {
     const day = createdAt.toISOString().slice(0, 10)
-    const slug = name.normalize('NFKD')
+    const normalizedSlug = name.normalize('NFKD')
       .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
       .replace(/^-+|-+$/gu, '')
-      .slice(0, 48) || 'experiment'
+    const slug = [...normalizedSlug].slice(0, 48).join('') || 'experiment'
     return join(this.layout.experiments, day, `${experimentId}-${slug}`)
   }
 
@@ -135,7 +135,7 @@ export class ArchiveManager {
     await this.ensureNewOwnedDirectory(path)
     await mkdir(join(path, 'uploads'), { recursive: true, mode: 0o700 })
     await mkdir(join(path, 'attachments'), { recursive: true, mode: 0o700 })
-    await mkdir(join(path, 'baseline/objects'), { recursive: true, mode: 0o700 })
+    await mkdir(join(path, 'baseline', 'objects'), { recursive: true, mode: 0o700 })
     return path
   }
 
@@ -248,7 +248,7 @@ export class ArchiveManager {
     await atomicWrite(paths.transcriptPath, Buffer.alloc(0), 0o600)
     await atomicWrite(paths.logPath, Buffer.alloc(0), 0o600)
     if (experiment.taskPackage.baseline !== null) {
-      const manifestPath = join(experiment.experimentPath, 'task/baseline/manifest.json')
+      const manifestPath = join(experiment.experimentPath, 'task', 'baseline', 'manifest.json')
       const objectRoot = join(experiment.experimentPath, 'objects')
       await this.helper.materialize(manifestPath, objectRoot, paths.workspace)
     }
@@ -269,17 +269,17 @@ export class ArchiveManager {
       home: join(root, 'home'),
       temp: join(root, 'tmp'),
       artifacts: join(root, 'artifacts'),
-      leasePath: join(root, 'lease/fencing-token'),
-      transcriptPath: join(root, 'evidence/transcript.jsonl'),
-      logPath: join(root, 'evidence/logs.jsonl'),
-      eventPath: join(root, 'evidence/events.jsonl'),
+      leasePath: join(root, 'lease', 'fencing-token'),
+      transcriptPath: join(root, 'evidence', 'transcript.jsonl'),
+      logPath: join(root, 'evidence', 'logs.jsonl'),
+      eventPath: join(root, 'evidence', 'events.jsonl'),
     }
   }
 
   experimentAttachmentPath(experiment: Experiment, ordinal: number, name: string): string {
     return this.assertUnder(
       experiment.experimentPath,
-      join(experiment.experimentPath, 'task/attachments', `${String(ordinal + 1).padStart(2, '0')}-${safeName(name)}`),
+      join(experiment.experimentPath, 'task', 'attachments', `${String(ordinal + 1).padStart(2, '0')}-${safeName(name)}`),
     )
   }
 
@@ -563,7 +563,7 @@ export class ArchiveManager {
     const normalizedRoot = resolve(root)
     const normalized = resolve(candidate)
     const rel = relative(normalizedRoot, normalized)
-    if (rel === '..' || rel.startsWith(`..${sep}`) || rel === '' && normalized !== normalizedRoot) {
+    if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`) || rel === '' && normalized !== normalizedRoot) {
       fail('ARCHIVE_PATH_ESCAPE', 'archive', '归档路径越界', `candidate outside root: ${candidate}`)
     }
     return normalized
@@ -613,6 +613,10 @@ async function appendJsonLine(path: string, value: unknown): Promise<void> {
 }
 
 async function fsyncDirectory(path: string): Promise<void> {
+  // Node cannot open directories with a flush-capable handle on Windows. File
+  // contents are flushed before each rename; directory fsync remains a Unix
+  // durability strengthening step.
+  if (process.platform === 'win32') return
   const handle = await open(path, 'r')
   try { await handle.sync() } finally { await handle.close() }
 }
@@ -646,7 +650,7 @@ function optionalForAttempt(attempt: Attempt, path: string): boolean {
 }
 
 function safeName(value: string): string {
-  return value.replace(/[\\/\0]/gu, '_').slice(0, 180) || 'attachment'
+  return sanitizeFileName(value)
 }
 
 function archiveTaskPackage(taskPackage: Experiment['taskPackage']): object {

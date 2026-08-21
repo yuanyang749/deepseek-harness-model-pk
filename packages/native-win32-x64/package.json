@@ -1,0 +1,10 @@
+{
+  "name": "@model-pk/native-win32-x64",
+  "version": "0.1.0",
+  "description": "Model PK native helper for Windows x64",
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin", "manifest.json"],
+  "type": "module"
+}

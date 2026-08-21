@@ -615,7 +615,7 @@ Preflight 状态为 NOT_CHECKED、CHECKING、READY、WARNING、BLOCKED。Start P
 - 必须使用已规范化和校验的准确实验根目录调用本机文件管理器。
 - 目录丢失、权限不足或打开失败时，显示具体错误并提供 Copy Path。
 - 不得静默新建空目录冒充原实验目录。
-- V1 首发验收平台为 macOS，目标文件管理器为 Finder；Windows 与 Linux 不属于 V1 发布门禁。
+- V1 验收平台为 macOS 与 Windows，分别使用 Finder 与 Explorer；Linux 不属于 V1 发布门禁。
 
 ### FR-016：页面与进程恢复
 
@@ -1427,7 +1427,7 @@ deepseek-harness-model-pk/
 
 **Given** Experiment 目录存在<br>
 **When** 点击 Open Experiment Folder<br>
-**Then** V1 在 macOS 中由 Finder 打开准确的实验根目录。目录缺失或无权限时，显示具体错误并允许复制原登记路径。
+**Then** V1 在 macOS 中由 Finder、在 Windows 中由 Explorer 打开准确的实验根目录。目录缺失或无权限时，显示具体错误并允许复制原登记路径。
 
 ### AC-032：宿主重启恢复
 
@@ -1598,7 +1598,7 @@ Codex CLI、Claude Code CLI、其他 Agent Runtime 和 Agent Router 不应被当
 8. 图片格式、数量、大小和不同模型能力交集的准确限制。
 9. V1 默认 NO_PROGRESS_WARNING、STALLED、硬超时和取消宽限期的最终数值。
 10. 实验数据根目录、文件权限、保留周期和用户删除策略。
-11. macOS 上通过 DSH 或宿主正式接口打开 Finder 的具体 API 与错误映射。
+11. macOS / Windows 上通过宿主正式接口打开 Finder / Explorer 的具体 API 与错误映射。
 12. Provider 模型别名能否解析到真实 revision。
 
 每个待确认项都必须在技术设计或兼容性报告中得到结论。若结论影响公平性、归档或恢复，必须在开始对应模块实现前解决。

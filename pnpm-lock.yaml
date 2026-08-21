@@ -67,10 +67,20 @@ importers:
       '@model-pk/native-darwin-x64':
         specifier: workspace:*
         version: link:packages/native-darwin-x64
+      '@model-pk/native-win32-arm64':
+        specifier: workspace:*
+        version: link:packages/native-win32-arm64
+      '@model-pk/native-win32-x64':
+        specifier: workspace:*
+        version: link:packages/native-win32-x64
 
   packages/native-darwin-arm64: {}
 
   packages/native-darwin-x64: {}
+
+  packages/native-win32-arm64: {}
+
+  packages/native-win32-x64: {}
 
 packages:
 

@@ -116,7 +116,15 @@ export function validateUnicode(value: string, field: string): void {
 
 export function sanitizeFileName(value: string): string {
   validateUnicode(value, 'fileName')
-  const base = value.replace(/[\\/\0]/gu, '_').replace(/^\.+$/u, '_').slice(0, 180)
+  let portable = value.replace(/[<>:"/\\|?*\u0000-\u001f]/gu, '_')
+  portable = /^\.+$/u.test(portable) ? '_' : portable.replace(/[ .]+$/gu, '')
+  let base = ''
+  for (const character of portable) {
+    if (base.length + character.length > 180) break
+    base += character
+  }
+  base = base.replace(/[ .]+$/gu, '')
+  if (/^(?:con|prn|aux|nul|conin\$|conout\$|(?:com|lpt)[1-9¹²³])(?:\.|$)/iu.test(base)) base = `_${base}`
   return base.length > 0 ? base : 'attachment'
 }
 
@@ -127,4 +135,3 @@ export function assertNoUnknownKeys(record: Record<string, unknown>, keys: reado
     fail('VALIDATION_ERROR', 'validation', `${label} 包含未知字段`, `unknown keys: ${unknown.join(', ')}`)
   }
 }
-

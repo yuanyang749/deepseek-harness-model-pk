@@ -8,15 +8,18 @@ const profileIndex = args.indexOf('--profile')
 const profile = profileIndex >= 0 ? args[profileIndex + 1] : 'web'
 if (typeof profile !== 'string' || !/^[a-z0-9-]+$/u.test(profile)) throw new Error('invalid --profile value')
 const skipBuild = args.includes('--skip-build')
-const dsh = join(root, 'node_modules/.bin/dsh')
+const windows = process.platform === 'win32'
+const pnpm = windows ? 'pnpm.cmd' : 'pnpm'
+const dsh = join(root, 'node_modules', '.bin', windows ? 'dsh.cmd' : 'dsh')
+const commandOptions = { cwd: root, stdio: 'inherit', ...(windows ? { shell: true } : {}) }
 
 if (!skipBuild) {
-  execFileSync('pnpm', ['build:native'], { cwd: root, stdio: 'inherit' })
-  execFileSync('pnpm', ['build'], { cwd: root, stdio: 'inherit' })
+  execFileSync(pnpm, ['build:native'], commandOptions)
+  execFileSync(pnpm, ['build'], commandOptions)
 }
-const version = execFileSync(dsh, ['--version'], { cwd: root, encoding: 'utf8' }).trim()
+const version = execFileSync(dsh, ['--version'], { cwd: root, encoding: 'utf8', ...(windows ? { shell: true } : {}) }).trim()
 if (version !== '0.1.0-rc.7') throw new Error(`Model PK requires DSH 0.1.0-rc.7, found ${version}`)
-execFileSync(dsh, ['plugin', '--profile', profile, 'add', root], { cwd: root, stdio: 'inherit' })
+execFileSync(dsh, ['plugin', '--profile', profile, 'add', root], commandOptions)
 
 console.log('')
 console.log(`Installed dsh-model-pk into DSH profile ${profile}.`)

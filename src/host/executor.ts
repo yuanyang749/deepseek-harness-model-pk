@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type {
   Attempt,
   ExperimentProjection,
@@ -11,7 +12,7 @@ import { HARNESS_PRESET, LIMITS } from '../contracts/constants.js'
 import { ModelPkException, modelPkError } from '../core/error.js'
 import { canonicalize, hashCanonical, sha256Bytes } from '../core/jcs.js'
 import type { NativeHelper, NativeTreeManifest } from '../native/helper.js'
-import type { SeatbeltRunner } from '../native/seatbelt.js'
+import type { SandboxRunner } from '../native/sandbox.js'
 import type { ArchiveManager, AttemptRuntimePaths } from './archive.js'
 import type {
   DshAgentContext,
@@ -60,7 +61,7 @@ export class AttemptExecutor {
     private readonly ctx: DshHostContext,
     private readonly archive: ArchiveManager,
     private readonly helper: NativeHelper,
-    private readonly seatbelt: SeatbeltRunner,
+    private readonly sandbox: SandboxRunner,
     private readonly models: ModelCatalog,
   ) {}
 
@@ -123,7 +124,14 @@ export class AttemptExecutor {
           .join('')
       }
     })
+    const sandboxPaths = {
+      attemptRoot: runtime.attemptRoot,
+      workspace: runtime.workspace,
+      home: runtime.home,
+      temp: runtime.temp,
+    }
     try {
+      await this.sandbox.prepare(sandboxPaths)
       handle = await this.ctx.agents.create({
         sessionId,
         meta: { cwd: runtime.workspace, agentPreset: HARNESS_PRESET },
@@ -222,7 +230,11 @@ export class AttemptExecutor {
           disposed = true
           offSession()
           await evidence.flush()
-          await currentHandle.dispose()
+          try {
+            await currentHandle.dispose()
+          } finally {
+            await this.sandbox.cleanup(sandboxPaths)
+          }
         },
       }
       return prepared
@@ -230,6 +242,7 @@ export class AttemptExecutor {
       offSession()
       await evidence.flush()
       if (handle !== null) await handle.dispose().catch(() => undefined)
+      await this.sandbox.cleanup(sandboxPaths).catch(() => undefined)
       throw error
     }
   }
@@ -238,35 +251,53 @@ export class AttemptExecutor {
     const attempt: Attempt = probeAttempt()
     const runtime: AttemptRuntimePaths = {
       attemptRoot: root,
-      workspace: `${root}/workspace`,
-      home: `${root}/home`,
-      temp: `${root}/tmp`,
-      artifacts: `${root}/artifacts`,
-      leasePath: `${root}/lease/fencing-token`,
-      transcriptPath: `${root}/evidence/transcript.jsonl`,
-      logPath: `${root}/evidence/logs.jsonl`,
-      eventPath: `${root}/evidence/events.jsonl`,
+      workspace: join(root, 'workspace'),
+      home: join(root, 'home'),
+      temp: join(root, 'tmp'),
+      artifacts: join(root, 'artifacts'),
+      leasePath: join(root, 'lease', 'fencing-token'),
+      transcriptPath: join(root, 'evidence', 'transcript.jsonl'),
+      logPath: join(root, 'evidence', 'logs.jsonl'),
+      eventPath: join(root, 'evidence', 'events.jsonl'),
     }
     for (const path of [runtime.workspace, runtime.home, runtime.temp, runtime.artifacts]) {
-      await import('node:fs/promises').then(fs => fs.mkdir(path, { recursive: true, mode: 0o700 }))
+      await mkdir(path, { recursive: true, mode: 0o700 })
     }
-    await import('node:fs/promises').then(fs => fs.mkdir(`${root}/lease`, { recursive: true, mode: 0o700 }))
-    await import('node:fs/promises').then(fs => fs.writeFile(runtime.leasePath, `${attempt.fencingToken}\n`, { mode: 0o600 }))
+    await mkdir(join(root, 'lease'), { recursive: true, mode: 0o700 })
+    await writeFile(runtime.leasePath, `${attempt.fencingToken}\n`, { mode: 0o600 })
     const sessionId = randomUUID()
-    const handle = await this.ctx.agents.create({
-      sessionId,
-      meta: { cwd: runtime.workspace, agentPreset: HARNESS_PRESET },
-      agentOptions: { provider, model, maxTokens: LIMITS.outputTokens },
-      setup: context => this.installHarness(context, runtime, attempt, { provider, model, initialMessage: null }),
-    })
+    const sandboxPaths = {
+      attemptRoot: runtime.attemptRoot,
+      workspace: runtime.workspace,
+      home: runtime.home,
+      temp: runtime.temp,
+    }
+    let handle: DshAgentHandle | null = null
     try {
+      await this.sandbox.prepare(sandboxPaths)
+      handle = await this.ctx.agents.create({
+        sessionId,
+        meta: { cwd: runtime.workspace, agentPreset: HARNESS_PRESET },
+        agentOptions: { provider, model, maxTokens: LIMITS.outputTokens },
+        setup: context => this.installHarness(context, runtime, attempt, { provider, model, initialMessage: null }),
+      })
       if (handle.agent.id !== sessionId) throw new Error('agent/session id mismatch')
       assertFreshSession(handle.agent.session)
       if (handle.agent.status !== 'idle') throw new Error('new session is not idle')
     } finally {
-      await handle.dispose()
+      await handle?.dispose().catch(() => undefined)
+      await this.sandbox.cleanup(sandboxPaths).catch(() => undefined)
       await rm(root, { recursive: true, force: true })
     }
+  }
+
+  async cleanupRuntime(runtime: AttemptRuntimePaths): Promise<void> {
+    await this.sandbox.cleanup({
+      attemptRoot: runtime.attemptRoot,
+      workspace: runtime.workspace,
+      home: runtime.home,
+      temp: runtime.temp,
+    })
   }
 
   private async prepareAttachments(experiment: ExperimentProjection): Promise<readonly unknown[]> {
@@ -370,7 +401,7 @@ export class AttemptExecutor {
       definition('bash', async (raw, execution) => {
         const args = argsRecord(raw)
         const command = stringArg(args, 'command')
-        const result = await this.seatbelt.run({
+        const result = await this.sandbox.run({
           attemptRoot: runtime.attemptRoot,
           workspace: runtime.workspace,
           home: runtime.home,

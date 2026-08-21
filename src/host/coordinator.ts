@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { lstat, realpath } from 'node:fs/promises'
-import { relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import type {
   Attempt,
   DurableAction,
@@ -316,10 +316,10 @@ export class Coordinator {
     const actual = await realpath(registered)
     const root = await realpath(this.archive.layout.experiments)
     const rel = relative(root, actual)
-    if (rel === '..' || rel.startsWith(`..${sep}`)) fail('ARCHIVE_PATH_ESCAPE', 'open-folder', '实验目录路径无效', `path outside data root: ${actual}`)
+    if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) fail('ARCHIVE_PATH_ESCAPE', 'open-folder', '实验目录路径无效', `path outside data root: ${actual}`)
     const info = await lstat(actual)
     if (!info.isDirectory() || info.isSymbolicLink()) fail('ARCHIVE_PATH_ESCAPE', 'open-folder', '实验目录路径无效', `not a regular directory: ${actual}`)
-    await openInFinder(actual)
+    await openInFileManager(actual)
     return { opened: true }
   }
 
@@ -342,10 +342,10 @@ export class Coordinator {
     const actual = await realpath(registered)
     const root = await realpath(this.archive.layout.experiments)
     const rel = relative(root, actual)
-    if (rel === '..' || rel.startsWith(`..${sep}`)) fail('ARCHIVE_PATH_ESCAPE', 'open-result', '结果目录路径无效', `path outside data root: ${actual}`)
+    if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) fail('ARCHIVE_PATH_ESCAPE', 'open-result', '结果目录路径无效', `path outside data root: ${actual}`)
     const info = await lstat(actual)
     if (!info.isDirectory() || info.isSymbolicLink()) fail('ARCHIVE_PATH_ESCAPE', 'open-result', '结果目录路径无效', `not a regular directory: ${actual}`)
-    await openInFinder(actual)
+    await openInFileManager(actual)
     return { opened: true }
   }
 
@@ -502,20 +502,24 @@ function stringResult(action: DurableAction, key: string): string | null {
   return typeof value === 'string' ? value : null
 }
 
-function openInFinder(target: string): Promise<void> {
+function openInFileManager(target: string): Promise<void> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = process.platform === 'win32'
-      ? spawn('explorer.exe', [target], { stdio: 'ignore', windowsHide: true })
-      : process.platform === 'darwin'
-        ? spawn('/usr/bin/open', [target], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin' } })
-        : null
-    if (child === null) {
+    if (process.platform === 'win32') {
+      const child = spawn(windowsSystemExecutable('explorer.exe'), [target], { stdio: 'ignore', windowsHide: true })
+      child.once('error', rejectPromise)
+      // explorer.exe commonly delegates to an existing shell process and may
+      // later return a non-zero code even though the folder opened.
+      child.once('spawn', resolvePromise)
+      return
+    }
+    if (process.platform !== 'darwin') {
       rejectPromise(new Error(`打开目录仅支持 macOS 和 Windows，当前是 ${process.platform}`))
       return
     }
+    const child = spawn('/usr/bin/open', [target], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin' } })
     child.once('error', rejectPromise)
     child.once('close', code => {
-      if (code === 0 || process.platform === 'win32' && (code === 1 || code === null)) {
+      if (code === 0) {
         resolvePromise()
         return
       }
@@ -538,7 +542,7 @@ function chooseFolderMac(): Promise<{ path: string | null }> {
     })
     collectProcess(child, (code, stdout, stderr) => {
       if (code === 0) {
-        const path = stdout.trim().replace(/\/$/u, '')
+        const path = stripTrailingSeparators(stdout.trim())
         resolvePromise({ path: path.length === 0 ? null : path })
         return
       }
@@ -555,19 +559,20 @@ function chooseFolderWindows(): Promise<{ path: string | null }> {
   return new Promise((resolvePromise, rejectPromise) => {
     const script = [
       'Add-Type -AssemblyName System.Windows.Forms',
+      '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
       '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
       '$dialog.Description = "选择项目起始目录"',
       '$dialog.ShowNewFolderButton = $true',
       'if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 2 }',
       'Write-Output $dialog.SelectedPath',
     ].join('; ')
-    const child = spawn('powershell.exe', ['-NoProfile', '-STA', '-Command', script], {
+    const child = spawn(windowsSystemExecutable('System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-STA', '-Command', script], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
     collectProcess(child, (code, stdout, stderr) => {
       if (code === 0) {
-        const path = stdout.trim().replace(/[\\/]+$/u, '')
+        const path = stripTrailingSeparators(stdout.trim())
         resolvePromise({ path: path.length === 0 ? null : path })
         return
       }
@@ -578,6 +583,17 @@ function chooseFolderWindows(): Promise<{ path: string | null }> {
       rejectPromise(new Error(stderr.trim() || `powershell exited ${code}`))
     }, rejectPromise)
   })
+}
+
+function windowsSystemExecutable(...components: string[]): string {
+  const root = process.env.SystemRoot ?? process.env.WINDIR
+  if (root === undefined || !isAbsolute(root)) throw new Error('Windows SystemRoot 不可用')
+  return join(root, ...components)
+}
+
+function stripTrailingSeparators(value: string): string {
+  if (value.length === 0 || value === parse(value).root) return value
+  return value.replace(/[\\/]+$/u, '')
 }
 
 function collectProcess(

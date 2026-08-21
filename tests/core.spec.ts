@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { canonicalize, hashCanonical, sha256Text } from '../src/core/jcs.js'
 import { assertAttemptTransition, deriveExperimentOutcome, isRetryableTerminal } from '../src/core/state-machine.js'
-import { validatePrompt, validateTaskName } from '../src/core/validation.js'
+import { sanitizeFileName, validatePrompt, validateTaskName } from '../src/core/validation.js'
 
 describe('JCS and hashes', () => {
   it('orders UTF-16 keys and normalizes ECMAScript numbers', () => {
@@ -25,6 +25,16 @@ describe('validation and lifecycle', () => {
     expect(() => validatePrompt('  \n')).toThrow(/whitespace-only/u)
     expect(() => validateTaskName('x'.repeat(121))).toThrow(/121/u)
     expect(() => validatePrompt('ok')).not.toThrow()
+  })
+
+  it('sanitizes attachment names for macOS and Windows filesystems', () => {
+    expect(sanitizeFileName('report:final?.png ')).toBe('report_final_.png')
+    expect(sanitizeFileName('CON.txt')).toBe('_CON.txt')
+    expect(sanitizeFileName('CONOUT$')).toBe('_CONOUT$')
+    expect(sanitizeFileName('COM¹.log')).toBe('_COM¹.log')
+    expect(sanitizeFileName('..')).toBe('_')
+    expect(sanitizeFileName(`${'a'.repeat(179)}.x`)).toBe('a'.repeat(179))
+    expect(sanitizeFileName('😀'.repeat(100))).toBe('😀'.repeat(90))
   })
 
   it('rejects illegal state edges and derives outcomes from latest attempts', () => {

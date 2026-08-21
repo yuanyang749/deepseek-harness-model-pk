@@ -10,4 +10,4 @@ target/
 *.db-shm
 *.db-wal
 packages/native-*/bin/model-pk-helper
-
+packages/native-*/bin/model-pk-helper.exe

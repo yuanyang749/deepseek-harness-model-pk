@@ -23,7 +23,7 @@ import type { CompatibilityEvidence } from './compatibility.js'
 import type { DshHostContext } from './dsh.js'
 import { resolveHarness } from './harness.js'
 import type { ModelCatalog } from './model-catalog.js'
-import type { SeatbeltRunner } from '../native/seatbelt.js'
+import type { SandboxRunner } from '../native/sandbox.js'
 
 export class PreflightService {
   constructor(
@@ -31,7 +31,7 @@ export class PreflightService {
     private readonly store: ControlStore,
     private readonly archive: ArchiveManager,
     private readonly helper: NativeHelper,
-    private readonly seatbelt: SeatbeltRunner,
+    private readonly sandbox: SandboxRunner,
     private readonly models: ModelCatalog,
     private readonly compatibility: () => CompatibilityEvidence,
   ) {}
@@ -148,7 +148,7 @@ export class PreflightService {
         }),
       }
     })
-    const harness = resolveHarness(this.seatbelt)
+    const harness = resolveHarness(this.sandbox)
     await addCheck('harness', '固定 Harness', async () => {
       if (harness.toolNames.join('\0') !== 'bash\0edit\0glob\0grep\0read\0write') throw new Error('tool contract drift')
       return { fingerprint: harness.fingerprint, preset: harness.preset }

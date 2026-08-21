@@ -50,7 +50,9 @@
   },
   "optionalDependencies": {
     "@model-pk/native-darwin-arm64": "workspace:*",
-    "@model-pk/native-darwin-x64": "workspace:*"
+    "@model-pk/native-darwin-x64": "workspace:*",
+    "@model-pk/native-win32-arm64": "workspace:*",
+    "@model-pk/native-win32-x64": "workspace:*"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

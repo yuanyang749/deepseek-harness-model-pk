@@ -1,9 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { access, mkdir, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
-import { resolve } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { LIMITS } from '../contracts/constants.js'
 import { fail } from '../core/error.js'
+import type { NativeHelper } from './helper.js'
 
 export interface SandboxPaths {
   readonly attemptRoot: string
@@ -23,10 +24,16 @@ export interface SandboxRunResult {
 
 const OUTPUT_LIMIT = 2 * 1024 * 1024
 
-export class SeatbeltRunner {
+export class SandboxRunner {
   readonly executable = '/usr/bin/sandbox-exec'
 
+  constructor(private readonly helper: NativeHelper) {}
+
   async available(): Promise<boolean> {
+    if (process.platform === 'win32') {
+      return this.helper.probe.version.features.includes('appcontainer')
+        && this.helper.probe.version.features.includes('job-object')
+    }
     if (process.platform !== 'darwin') return false
     try {
       await access(this.executable, fsConstants.X_OK)
@@ -37,16 +44,45 @@ export class SeatbeltRunner {
   }
 
   normalizedPolicy(): Readonly<Record<string, unknown>> {
+    if (process.platform === 'win32') {
+      return Object.freeze({
+        engine: 'windows-appcontainer',
+        default: 'deny',
+        network: 'deny-all-no-capabilities',
+        process: 'job-object-kill-on-close',
+        readable: ['$WINDOWS_RUNTIME', '$WORKSPACE', '$PRIVATE_HOME', '$PRIVATE_TMP'],
+        writable: ['$WORKSPACE', '$PRIVATE_HOME', '$PRIVATE_TMP'],
+        sharedTemp: 'denied',
+        secretsEnvironment: 'empty-allowlist',
+      })
+    }
     return Object.freeze({
       engine: 'macos-seatbelt',
       default: 'deny',
       network: 'deny-all',
       process: 'allow-child-processes',
-      readable: ['$ATTEMPT_ROOT', '/System', '/usr', '/bin', '/sbin', '/Library/Apple'],
+        readable: ['$ATTEMPT_ROOT', '/', '/System', '/usr', '/bin', '/sbin', '/Library/Apple'],
       writable: ['$WORKSPACE', '$PRIVATE_HOME', '$PRIVATE_TMP'],
       sharedTemp: 'denied',
       secretsEnvironment: 'empty-allowlist',
     })
+  }
+
+  subprocessPolicy(): string {
+    return process.platform === 'win32' ? 'windows-job-object' : 'seatbelt-process-group'
+  }
+
+  contractVersion(): string {
+    return process.platform === 'win32' ? 'model-pk-appcontainer-v1' : 'model-pk-seatbelt-v1'
+  }
+
+  async prepare(paths: SandboxPaths): Promise<void> {
+    await prepareSandboxPaths(paths)
+    if (process.platform === 'win32') await this.helper.prepareSandbox(paths)
+  }
+
+  async cleanup(paths: SandboxPaths): Promise<void> {
+    if (process.platform === 'win32') await this.helper.cleanupSandbox(paths.attemptRoot)
   }
 
   async run(
@@ -55,16 +91,19 @@ export class SeatbeltRunner {
     options: { readonly signal?: AbortSignal; readonly timeoutMs?: number } = {},
   ): Promise<SandboxRunResult> {
     if (!(await this.available())) {
-      fail('EXECUTION_ISOLATION_UNSUPPORTED', 'sandbox', '当前系统不支持固定执行隔离', 'sandbox-exec is not available')
+      fail('EXECUTION_ISOLATION_UNSUPPORTED', 'sandbox', '当前系统不支持固定执行隔离', `sandbox is not available for ${process.platform}`)
     }
-    for (const path of [paths.attemptRoot, paths.workspace, paths.home, paths.temp]) {
-      if (!resolve(path).startsWith(`${resolve(paths.attemptRoot)}/`) && resolve(path) !== resolve(paths.attemptRoot)) {
-        fail('ARCHIVE_PATH_ESCAPE', 'sandbox', 'Attempt 路径越界', `sandbox path outside attempt root: ${path}`)
-      }
-      await mkdir(path, { recursive: true, mode: 0o700 })
+    await prepareSandboxPaths(paths)
+    const rewrittenCommand = rewriteWorkspaceCommand(command, paths.workspace)
+    if (process.platform === 'win32') {
+      const result = await this.helper.runSandbox(paths, rewrittenCommand, {
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        timeoutMs: options.timeoutMs ?? LIMITS.executionTimeoutMs,
+        outputLimit: OUTPUT_LIMIT,
+      })
+      return redactResult(result, paths)
     }
     const policy = seatbeltPolicy(paths)
-    const rewrittenCommand = command.replaceAll('/workspace', paths.workspace)
     const child = spawn(this.executable, [
       '-p', policy,
       '/bin/bash', '--noprofile', '--norc', '-c', rewrittenCommand,
@@ -83,6 +122,56 @@ export class SeatbeltRunner {
     })
     return collect(child, paths, options.signal, options.timeoutMs ?? LIMITS.executionTimeoutMs)
   }
+}
+
+function rewriteWorkspaceCommand(command: string, workspace: string): string {
+  return command.replace(
+    /(^|[\s'"`=(:,;|&<>])\/workspace(?=$|[/\\\s'"`);,|&<>])/gu,
+    (_match, prefix: string) => `${prefix}${workspace}`,
+  )
+}
+
+async function prepareSandboxPaths(paths: SandboxPaths): Promise<void> {
+  const attemptRoot = resolve(paths.attemptRoot)
+  for (const path of [paths.attemptRoot, paths.workspace, paths.home, paths.temp]) {
+    const actual = resolve(path)
+    const rel = relative(attemptRoot, actual)
+    if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) {
+      fail('ARCHIVE_PATH_ESCAPE', 'sandbox', 'Attempt 路径越界', `sandbox path outside attempt root: ${path}`)
+    }
+    await mkdir(actual, { recursive: true, mode: 0o700 })
+  }
+}
+
+function redactResult(result: SandboxRunResult, paths: SandboxPaths): SandboxRunResult {
+  return {
+    ...result,
+    stdout: redactText(result.stdout, paths),
+    stderr: redactText(result.stderr, paths),
+  }
+}
+
+function redactText(value: string, paths: SandboxPaths): string {
+  let result = value
+  for (const [actual, logical] of [
+    [paths.home, '/workspace/.model-pk-home'],
+    [paths.temp, '/workspace/.model-pk-tmp'],
+    [paths.workspace, '/workspace'],
+    [paths.attemptRoot, '/workspace'],
+  ] as const) {
+    if (process.platform === 'win32') {
+      for (const variant of new Set([actual, actual.replaceAll('\\', '/')])) {
+        result = result.replace(new RegExp(escapeRegExp(variant), 'giu'), logical)
+      }
+    } else {
+      result = result.replaceAll(actual, logical)
+    }
+  }
+  return result
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 }
 
 function seatbeltPolicy(paths: SandboxPaths): string {
@@ -104,6 +193,7 @@ function seatbeltPolicy(paths: SandboxPaths): string {
   (subpath "/bin")
   (subpath "/sbin")
   (subpath "/Library/Apple")
+  (literal "/")
   (literal "/dev/null")
   (literal "/dev/urandom")
   (literal "/dev/random"))
@@ -162,6 +252,14 @@ function collect(
       signal?.removeEventListener('abort', abort)
       rejectPromise(error)
     })
+    child.on('exit', () => {
+      // `close` waits for descendants that inherited stdout/stderr. Kill the
+      // detached group as soon as its leader exits so an orphan cannot keep
+      // those pipes open long enough to mutate the workspace.
+      if (child.pid !== undefined) {
+        try { process.kill(-child.pid, 'SIGKILL') } catch { /* process group already exited */ }
+      }
+    })
     child.on('close', (code, closeSignal) => {
       const pid = child.pid
       if (pid !== undefined) {
@@ -171,16 +269,11 @@ function collect(
       finished = true
       clearTimeout(timeout)
       signal?.removeEventListener('abort', abort)
-      const redact = (value: string): string => value
-        .replaceAll(paths.workspace, '/workspace')
-        .replaceAll(paths.attemptRoot, '/workspace')
-        .replaceAll(paths.home, '/workspace/.model-pk-home')
-        .replaceAll(paths.temp, '/workspace/.model-pk-tmp')
       resolvePromise({
         exitCode: code,
         signal: closeSignal,
-        stdout: redact(Buffer.concat(stdout).toString('utf8')),
-        stderr: redact(Buffer.concat(stderr).toString('utf8')),
+        stdout: redactText(Buffer.concat(stdout).toString('utf8'), paths),
+        stderr: redactText(Buffer.concat(stderr).toString('utf8'), paths),
         timedOut,
         truncated,
       })

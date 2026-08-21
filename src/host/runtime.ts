@@ -16,7 +16,7 @@ import { PreflightService } from './preflight.js'
 import { createBusinessRpcHandler, createNativeRpcHandler } from './rpc-router.js'
 import { Scheduler } from './scheduler.js'
 import { NativeHelper, initializeCapacitySlots } from '../native/helper.js'
-import { SeatbeltRunner } from '../native/seatbelt.js'
+import { SandboxRunner } from '../native/sandbox.js'
 import { ControlStore } from '../storage/store.js'
 
 export interface Config {
@@ -75,13 +75,13 @@ export class ModelPkRuntime {
         )
         store.registerCapacitySlots(slots)
       }
-      const seatbelt = new SeatbeltRunner()
+      const sandbox = new SandboxRunner(helper)
       const models = new ModelCatalog(ctx, config.adapterEvidence ?? {})
-      const executor = new AttemptExecutor(ctx, archive, helper, seatbelt, models)
+      const executor = new AttemptExecutor(ctx, archive, helper, sandbox, models)
       const gate = new CompatibilityGate({
         dshVersion: installedDshVersion(),
         dshCommit: config.dshCommit ?? process.env.DSH_SOURCE_COMMIT ?? null,
-      }, layout, helper, seatbelt)
+      }, layout, helper, sandbox)
       const modelItems = await models.list().catch(() => [])
       const probeModel = modelItems.find(item => item.support === 'SUPPORTED')
       const compatibility = await gate.run(probeModel === undefined ? {} : {
@@ -93,7 +93,7 @@ export class ModelPkRuntime {
       })
       await writeCompatibilityReport(layout.control, compatibility.report, compatibility.checks)
       const drafts = new DraftService(store, archive, helper)
-      const preflight = new PreflightService(ctx, store, archive, helper, seatbelt, models, () => compatibility)
+      const preflight = new PreflightService(ctx, store, archive, helper, sandbox, models, () => compatibility)
       scheduler = new Scheduler(store, archive, helper, executor)
       coordinator = new Coordinator(store, archive, preflight, models, scheduler)
       disposeEventExport = store.onEvent(event => {
