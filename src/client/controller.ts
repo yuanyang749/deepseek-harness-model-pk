@@ -356,7 +356,7 @@ export class ModelPkUiController {
 
   async exportWorkspace(attemptId: string): Promise<void> {
     const experiment = this.requiredExperiment()
-    await this.run('正在导出完整工作区…', async () => {
+    await this.run('正在导出完整项目…', async () => {
       await this.api.native(RPC_ENDPOINTS.attemptExportWorkspace, {
         experimentId: experiment.experimentId,
         attemptId,

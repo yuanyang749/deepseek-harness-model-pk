@@ -447,6 +447,12 @@ describe('formal product UI', () => {
     expect(screen.getByText('验收测试未配置')).toBeInTheDocument()
     expect(screen.getByText('100 输入 · 20 输出')).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: '加入 Model 2 第 1 次执行对照' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '导出完整项目' })).toHaveAttribute(
+      'title',
+      '将该模型生成的全部项目文件导出到结果目录，可直接打开、运行或编辑。',
+    )
+    expect(screen.getAllByRole('button', { name: '导出完整项目' })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: '导出工作区' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('checkbox', { name: '加入 Model 1 第 1 次执行对照' }))
     expect(screen.getByRole('heading', { name: /文本结果双栏对照/u })).toBeInTheDocument()

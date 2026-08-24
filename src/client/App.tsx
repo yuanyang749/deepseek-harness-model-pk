@@ -639,7 +639,7 @@ function RunCard(props: { run: Run; experiment: ExperimentProjection; events: Ui
         {cancellable ? <button className="mpk-btn mpk-btn-danger mpk-btn-small" type="button" onClick={() => { void props.controller.stopAttempt(latest.attemptId, latest.lifecycleVersion) }}>停止</button> : null}
         {retryable ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.retry(props.run.runId, latest.attemptId) }}>重试</button> : null}
         {['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'STALLED', 'DISCONNECTED', 'CANCELLED'].includes(latest.state) ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.openResult(latest.attemptId) }}>打开结果目录</button> : null}
-        {latest.state === 'SUCCEEDED' ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.exportWorkspace(latest.attemptId) }}>导出工作区</button> : null}
+        {canExportProject(latest) ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" title="将该模型生成的全部项目文件导出到结果目录，可直接打开、运行或编辑。" onClick={() => { void props.controller.exportWorkspace(latest.attemptId) }}>导出完整项目</button> : null}
         {latest.state === 'SUCCEEDED' ? <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void props.controller.runAgain(props.run.runId, latest.attemptId) }}>再跑一次</button> : null}
       </div>
       <details>
@@ -703,6 +703,11 @@ function AttemptMetrics({ attempt }: { attempt: Attempt }): JSX.Element | null {
 
 function isTextComparable(attempt: Attempt): boolean {
   return attempt.workspaceSummary?.mode !== 'ENGINEERING' && comparisonText(attempt).length > 0
+}
+
+function canExportProject(attempt: Attempt): boolean {
+  return attempt.state === 'SUCCEEDED'
+    && (attempt.workspaceSummary == null || attempt.workspaceSummary.mode === 'ENGINEERING')
 }
 
 function comparisonText(attempt: Attempt): string {
