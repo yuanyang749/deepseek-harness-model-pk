@@ -1,8 +1,8 @@
 export const PLUGIN_ID = 'dsh-model-pk'
 export const PLUGIN_VERSION = '0.1.0'
 export const SCHEMA_VERSION = 'model-pk/v1'
-export const DSH_VERSION = '0.1.0-rc.7'
-export const DSH_COMMIT = '99f6f02fecdb7dff40c3fbc9470f5907c29f74ca'
+export const DSH_VERSION = '0.1.1-rc.2'
+export const DSH_COMMIT = 'b150a551b8d465e31e418e1b2eaf5e79bbb7d28e'
 export const HARNESS_PRESET = 'model-pk-v1'
 export const BUSINESS_RPC_CHANNEL = '/model-pk'
 export const NATIVE_RPC_CHANNEL = '/model-pk-native'
@@ -61,4 +61,3 @@ export const NON_TERMINAL_ATTEMPT_STATES = Object.freeze([
   'CANCELLING',
   'FINALIZING',
 ] as const)
-

@@ -6,6 +6,8 @@ import { RPC_ENDPOINTS } from '../src/contracts/rpc.js'
 import { ModelPkOverlay, ModelPkSettingsSection } from '../src/client/App.js'
 import { ModelPkApi } from '../src/client/api.js'
 import { ModelPkUiController } from '../src/client/controller.js'
+import { buildExperimentReport, qualityRankingStorageKey } from '../src/client/report.js'
+import { MODEL_PK_CSS } from '../src/client/styles.js'
 import type { ModelPkClientContext } from '../src/client/context.js'
 import type { Draft, ExperimentProjection, ModelListItem } from '../src/contracts/types.js'
 import { createExperimentDefinition } from '../src/domain/factory.js'
@@ -90,6 +92,7 @@ function adaptiveComparisonExperiment(): ExperimentProjection {
       finalResponse: ordinal === 0 ? '模型说它写完了故事' : '模型说它生成了网页',
       archiveCompleteness: 'COMPLETE' as const,
       startedAt: '2026-08-18T00:00:00.000Z',
+      firstOutputAt: '2026-08-18T00:00:05.000Z',
       executionEndedAt: '2026-08-18T00:01:05.000Z',
       finalizedAt: '2026-08-18T00:01:06.000Z',
     }
@@ -112,6 +115,10 @@ beforeEach(() => localStorage.clear())
 afterEach(() => cleanup())
 
 describe('formal product UI', () => {
+  it('keeps unequal result cards sized to their own content', () => {
+    expect(MODEL_PK_CSS).toContain('.mpk-run-grid{align-items:start}.mpk-run{align-content:start}')
+  })
+
   it('loads Host state and renders the create surface', async () => {
     const controller = new ModelPkUiController(new ModelPkApi(context()))
     await controller.open()
@@ -415,6 +422,32 @@ describe('formal product UI', () => {
     expect(localStorage.getItem('dsh-model-pk:last-experiment-id')).toBeNull()
   })
 
+  it('polls from the current experiment cursor instead of replaying retained UI events', async () => {
+    const experiment = adaptiveComparisonExperiment()
+    localStorage.setItem('dsh-model-pk:last-experiment-id', experiment.experimentId)
+    let polledAfterCursor: unknown
+    const clientContext = context()
+    clientContext.connection.rpc.call = async (_channel, endpoint, payload, signal) => {
+      let value: unknown
+      if (endpoint === RPC_ENDPOINTS.capabilitiesGet) value = fixtureCapability()
+      else if (endpoint === RPC_ENDPOINTS.modelsList) value = []
+      else if (endpoint === RPC_ENDPOINTS.draftCreate) value = fixtureDraft()
+      else if (endpoint === RPC_ENDPOINTS.experimentGet) value = experiment
+      else if (endpoint === RPC_ENDPOINTS.experimentPoll) {
+        polledAfterCursor = (payload as { readonly afterCursor?: unknown }).afterCursor
+        return new Promise(resolve => signal?.addEventListener('abort', () => {
+          resolve({ ok: false, error: { code: 'ABORTED', message: 'aborted' } })
+        }, { once: true }))
+      } else value = fixtureDraft()
+      return { ok: true, value: { ok: true, value } }
+    }
+    const controller = new ModelPkUiController(new ModelPkApi(clientContext))
+
+    await controller.open()
+    await waitFor(() => expect(polledAfterCursor).toBe(experiment.latestCursor))
+    controller.close()
+  })
+
   it('switches single-text and multi-file attempts to the appropriate comparison UI', async () => {
     const experiment = adaptiveComparisonExperiment()
     localStorage.setItem('dsh-model-pk:last-experiment-id', experiment.experimentId)
@@ -453,6 +486,7 @@ describe('formal product UI', () => {
     )
     expect(screen.getAllByRole('button', { name: '导出完整项目' })).toHaveLength(1)
     expect(screen.queryByRole('button', { name: '导出工作区' })).not.toBeInTheDocument()
+    expect(screen.queryAllByText(/日志与事件/u)).toHaveLength(0)
 
     fireEvent.click(screen.getByRole('checkbox', { name: '加入 Model 1 第 1 次执行对照' }))
     expect(screen.getByRole('heading', { name: /文本结果双栏对照/u })).toBeInTheDocument()
@@ -485,6 +519,100 @@ describe('formal product UI', () => {
     expect(() => render(<ModelPkOverlay controller={controller} />)).not.toThrow()
     expect(screen.getByText('模型最终回复')).toBeInTheDocument()
     expect(screen.getByText('模型说它写完了故事')).toBeInTheDocument()
+    controller.close()
+  })
+
+  it('builds report rows from the latest attempts without inventing missing metrics', () => {
+    const experiment = adaptiveComparisonExperiment()
+    const report = buildExperimentReport(experiment, experiment.runs.map(run => run.runId))
+
+    expect(report).toMatchObject({
+      experimentId: experiment.experimentId,
+      name: experiment.name,
+      completedAt: '2026-08-18T00:01:06.000Z',
+      rankingLabel: 'Model 1 ＞ Model 2',
+    })
+    expect(report.rows[0]).toMatchObject({
+      rank: 1,
+      modelName: 'Model 1',
+      state: 'SUCCEEDED',
+      durationMs: 65_000,
+      firstResponseMs: 5_000,
+      requestCount: 2,
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      changedFileCount: 1,
+      attemptCount: 1,
+    })
+
+    const withoutUsage = {
+      ...experiment,
+      runs: experiment.runs.map((run, index) => index === 0
+        ? { ...run, attempts: run.attempts.map(attempt => ({ ...attempt, tokenUsage: null })) }
+        : run),
+    }
+    expect(buildExperimentReport(withoutUsage, withoutUsage.runs.map(run => run.runId)).rows[0]).toMatchObject({
+      requestCount: null,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+    })
+  })
+
+  it('opens a desktop report from storage and saves the user-defined quality ranking', async () => {
+    const experiment = adaptiveComparisonExperiment()
+    const storage = [{
+      experimentId: experiment.experimentId,
+      name: experiment.name,
+      lifecycleState: experiment.lifecycleState,
+      outcome: experiment.outcome,
+      createdAt: experiment.createdAt,
+      settledAt: experiment.settledAt,
+      byteLength: 4096,
+      experimentPath: experiment.experimentPath,
+      resultPath: experiment.resultPath,
+      canDelete: true,
+      blockedReason: null,
+    }]
+    const clientContext = context()
+    clientContext.connection.rpc.call = async (_channel, endpoint) => {
+      const value = endpoint === RPC_ENDPOINTS.capabilitiesGet
+        ? fixtureCapability()
+        : endpoint === RPC_ENDPOINTS.modelsList
+          ? []
+          : endpoint === RPC_ENDPOINTS.draftCreate
+            ? fixtureDraft()
+            : endpoint === RPC_ENDPOINTS.storageListForDeletion
+              ? storage
+              : endpoint === RPC_ENDPOINTS.experimentGet
+                ? experiment
+                : fixtureDraft()
+      return { ok: true, value: { ok: true, value } }
+    }
+    const controller = new ModelPkUiController(new ModelPkApi(clientContext))
+    await controller.open()
+    controller.show('storage')
+    render(<ModelPkOverlay controller={controller} />)
+
+    const reportButton = await screen.findByRole('button', { name: `生成“${experiment.name}”的实验报告` })
+    fireEvent.click(reportButton)
+
+    expect(await screen.findByRole('dialog', { name: `实验报告 · ${experiment.name}` })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '首次响应' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '总 Token' })).toBeInTheDocument()
+    expect(screen.getByText('Model 1 ＞ Model 2')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '将 Model 2 上移' }))
+    expect(screen.getByText('Model 2 ＞ Model 1')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '保存排名' }))
+
+    expect(localStorage.getItem(qualityRankingStorageKey(experiment.experimentId))).toBe(JSON.stringify([
+      experiment.runs[1]!.runId,
+      experiment.runs[0]!.runId,
+    ]))
+    expect(screen.getByText('排名已保存')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '导出 PNG 报告' })).toBeInTheDocument()
     controller.close()
   })
 

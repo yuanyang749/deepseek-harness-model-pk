@@ -118,7 +118,7 @@ export class PreflightService {
         const capability = this.models.imageCapability(snapshot)
         assertImageInputSupported(snapshot, capability)
         if (!this.models.isImagePathVerified(snapshot)) {
-          throw new ModelPkException(modelPkError('ATTACHMENT_TRANSFORM_UNVERIFIED', 'preflight', `${snapshot.modelName} 的图片无损路径尚未验证`, `protocol=${snapshot.protocol}`))
+          throw new ModelPkException(modelPkError('ATTACHMENT_TRANSFORM_UNVERIFIED', 'preflight', `${snapshot.modelName} 的图片规范化请求路径尚未验证`, `protocol=${snapshot.protocol}`))
         }
       }
       const limits = this.ctx.attachments?.imageLimits

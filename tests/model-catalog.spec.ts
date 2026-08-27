@@ -113,19 +113,43 @@ describe('model catalog snapshots', () => {
     })
     expect(piAiBuiltinModelFacts('not-a-provider', 'not-a-model')).toBeUndefined()
   })
+
+  it('accepts a declared DeepSeek vision model through the native image path', async () => {
+    const catalog = new ModelCatalog(contextFor({
+      providerRoute: 'deepseek-official',
+      settingsNs: 'llm-deepseek',
+      model: {
+        provider: 'deepseek-official',
+        id: 'deepseek-v4-flash-vision-exp',
+        name: 'DeepSeek V4 Flash Vision Exp',
+        inputModalities: ['text', 'image'],
+        context: { contextWindow: 131_072 },
+        defaultMaxTokens: 16_384,
+      },
+      profile: {},
+    }))
+
+    const [item] = await catalog.list()
+    expect(item).toMatchObject({ protocol: 'deepseek-chat', support: 'SUPPORTED' })
+    if (item === undefined) throw new Error('fixture model missing')
+    const snapshot = await catalog.snapshot(item.modelConfigId)
+    expect(catalog.isImagePathVerified(snapshot)).toBe(true)
+  })
 })
 
 function contextFor(input: {
   readonly providerRoute: string
+  readonly settingsNs?: 'llm-pi-ai' | 'llm-deepseek'
   readonly model: DshResolvedModelInfo
   readonly profile: Readonly<Record<string, unknown>>
 }): DshHostContext {
+  const settingsNs = input.settingsNs ?? 'llm-pi-ai'
   return {
     llm: {
       listConfigurableProviders: () => [{
         provider: input.providerRoute,
         displayName: input.providerRoute,
-        settingsNs: 'llm-pi-ai',
+        settingsNs,
         settingsPath: ['providers', input.providerRoute],
       }],
       listProviders: () => [{ id: input.providerRoute, name: input.providerRoute }],
@@ -140,7 +164,7 @@ function contextFor(input: {
     },
     settings: {
       describe: () => [{
-        ns: 'llm-pi-ai',
+        ns: settingsNs,
         revision: 7,
         value: { providers: { [input.providerRoute]: input.profile } },
         secrets: [],

@@ -134,6 +134,7 @@ export interface DshHostContext {
       readonly maxImagesPerMessage: number
       readonly maxMessageImageBytes: number
       readonly maxImagePixels: number
+      readonly maxImageDimension: number
       readonly mediaTypes: readonly string[]
     }
     saveImages?(inputs: readonly { readonly data: Uint8Array; readonly mediaType: string; readonly name?: string }[]): Promise<readonly unknown[]>

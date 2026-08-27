@@ -19,7 +19,7 @@ export function fixtureModel(ordinal: number): ModelConfigSnapshot {
     modelId: `model-${ordinal}`,
     modelName: `Model ${ordinal}`,
     adapterPackage: '@deepseek-ai/dsh-llm-deepseek',
-    adapterVersion: '0.1.0-rc.7',
+    adapterVersion: '0.1.1-rc.2',
     protocol: 'deepseek-chat',
     revision: 'unresolved',
     inputModalities: ['text'] as const,
@@ -118,8 +118,8 @@ export function fixtureDraft(): Draft {
 export function fixtureCapability(): CapabilityReport {
   return {
     pluginVersion: '0.1.0',
-    expectedDshVersion: '0.1.0-rc.7',
-    expectedDshCommit: '99f6f02fecdb7dff40c3fbc9470f5907c29f74ca',
+    expectedDshVersion: '0.1.1-rc.2',
+    expectedDshCommit: 'b150a551b8d465e31e418e1b2eaf5e79bbb7d28e',
     hostPlatform: 'darwin',
     hostArch: 'arm64',
     dataRoot: '/fixture/model-pk/v1',

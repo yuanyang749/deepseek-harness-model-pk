@@ -4,8 +4,8 @@
 
 | Contract | Value |
 |---|---|
-| DSH package | `0.1.0-rc.7` |
-| DSH commit | `99f6f02fecdb7dff40c3fbc9470f5907c29f74ca` |
+| DSH package | `0.1.1-rc.2` |
+| DSH commit | `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e` |
 | Plugin | `dsh-model-pk@0.1.0` |
 | Node | `^22.19 || >=24` |
 | Host OS | macOS arm64 / x64; Windows arm64 / x64 |
@@ -42,19 +42,14 @@ It runs strict TypeScript checking, Vitest suites and both Host/Client productio
 - Each release runner builds and hashes its own `darwin-arm64`, `darwin-x64`, `win32-arm64` or `win32-x64` optional package.
 - Real DeepSeek/pi-ai Provider fixtures are recorded separately from Fake Adapter failure injection.
 - pi-ai routes without an observable supported protocol remain BLOCKED.
-- Image experiments remain BLOCKED unless the selected models, DSH attachment limits and byte-for-byte readback contract all pass.
+- Image experiments remain BLOCKED unless the selected models, DSH attachment limits, normalized-reference readback and version-pinned deterministic request projection all pass.
 
-## Verified local host
+## Verified upgrade evidence
 
-On 2026-08-18 the exact DSH commit above completed every dynamic probe as
-`PASS` on macOS arm64, including the hostile orphan and capacity-slot probes;
-the resulting report set `executionEnabled=true`. A browser-driven integration
-then started a two-model Experiment through the real DSH Agent path, settled
-both credential-failure Attempts, produced `CURRENT / COMPLETE` self-contained
-archives and an immutable Seal, restored the settled projection after a Host
-restart, and completed durable deletion while retaining only a content-free
-receipt. A `/var` to `/private/var` canonicalization regression found during
-that run is covered by the native archive test. Artifacts for other OS/CPU
-combinations are built and tested on their matching release runner rather than
-inferred from the local arm64 result; every installed host must still pass the
-runtime Compatibility Gate before Start is enabled.
+The DSH `0.1.1-rc.2` upgrade is covered by strict TypeScript checking, the
+version-pinned pi-ai request-image fixtures, normalized attachment-reference
+tests, DeepSeek native vision capability tests, all Vitest suites, and both
+Host/Client production builds. Artifacts for other OS/CPU combinations are
+built and tested on their matching release runner rather than inferred from a
+different platform; every installed host must still pass the runtime
+Compatibility Gate before Start is enabled.

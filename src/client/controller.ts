@@ -1,5 +1,4 @@
 import type {
-  AuditEvent,
   CapabilityReport,
   Draft,
   DraftUpdateRequest,
@@ -12,6 +11,7 @@ import type {
 } from '../contracts/types.js'
 import { RPC_ENDPOINTS } from '../contracts/rpc.js'
 import { ClientApiError, DshApiError, ModelPkApi } from './api.js'
+import { qualityRankingStorageKey } from './report.js'
 import { createImageInputMutation, VisionSettingsError, type ImageInputTarget } from './vision-settings.js'
 
 export type UiScreen = 'create' | 'preflight' | 'experiment' | 'storage'
@@ -27,7 +27,6 @@ export interface UiSnapshot {
   readonly draft: Draft | null
   readonly preflight: PreflightSnapshot | null
   readonly experiment: ExperimentProjection | null
-  readonly events: readonly AuditEvent[]
   readonly storage: readonly StorageListItem[]
 }
 
@@ -46,7 +45,6 @@ export class ModelPkUiController {
     draft: null,
     preflight: null,
     experiment: null,
-    events: [],
     storage: [],
   }
   private readonly listeners = new Set<() => void>()
@@ -308,7 +306,7 @@ export class ModelPkUiController {
         },
       })
       localStorage.setItem(LAST_EXPERIMENT_KEY, experiment.experimentId)
-      this.patch({ experiment, events: [], screen: 'experiment' })
+      this.patch({ experiment, screen: 'experiment' })
       this.watchExperiment(experiment.experimentId)
     })
   }
@@ -375,6 +373,14 @@ export class ModelPkUiController {
     })
   }
 
+  async loadExperimentReport(experimentId: string): Promise<ExperimentProjection | null> {
+    let report: ExperimentProjection | null = null
+    await this.run('正在生成实验报告…', async () => {
+      report = await this.api.business<ExperimentProjection>(RPC_ENDPOINTS.experimentGet, { experimentId })
+    })
+    return report
+  }
+
   async deleteExperiment(experimentId: string): Promise<void> {
     const deletingCurrent = this.value.experiment?.experimentId === experimentId
     if (deletingCurrent) this.stopWatchingExperiment()
@@ -385,9 +391,10 @@ export class ModelPkUiController {
         request: { experimentId },
       })
       deleted = true
+      localStorage.removeItem(qualityRankingStorageKey(experimentId))
       if (deletingCurrent) {
         localStorage.removeItem(LAST_EXPERIMENT_KEY)
-        this.patch({ experiment: null, events: [] })
+        this.patch({ experiment: null })
       }
       const storage = await this.api.business<readonly StorageListItem[]>(RPC_ENDPOINTS.storageListForDeletion, {})
       this.patch({ storage })
@@ -416,7 +423,9 @@ export class ModelPkUiController {
     const controller = new AbortController()
     this.pollAbort = controller
     void (async () => {
-      let cursor = this.value.events.at(-1)?.cursor ?? 0
+      let cursor = this.value.experiment?.experimentId === experimentId
+        ? this.value.experiment.latestCursor
+        : 0
       while (!controller.signal.aborted && this.value.open) {
         try {
           const result = await this.api.business<PollResult>(RPC_ENDPOINTS.experimentPoll, {
@@ -424,8 +433,7 @@ export class ModelPkUiController {
             afterCursor: cursor,
           }, controller.signal)
           cursor = result.nextCursor
-          const events = mergeEvents(this.value.events, result.events)
-          this.patch({ experiment: result.projection, events })
+          this.patch({ experiment: result.projection })
         } catch (error) {
           if (controller.signal.aborted) return
           this.patch({ error: clientError(error, 'poll') })
@@ -486,12 +494,6 @@ export class ModelPkUiController {
     this.value = { ...this.value, ...patch }
     for (const listener of this.listeners) listener()
   }
-}
-
-function mergeEvents(current: readonly AuditEvent[], next: readonly AuditEvent[]): AuditEvent[] {
-  const byCursor = new Map(current.map(event => [event.cursor, event]))
-  for (const event of next) byCursor.set(event.cursor, event)
-  return [...byCursor.values()].sort((left, right) => left.cursor - right.cursor).slice(-2000)
 }
 
 function clientError(error: unknown, phase: string): ModelPkError {

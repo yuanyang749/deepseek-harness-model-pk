@@ -3,14 +3,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AttachmentStore, {
   AttachmentId,
+  ImageVariantId,
   type ImageAttachmentLimits,
   type ImageAttachmentRef,
+  type ImageRequestPolicy,
+  type RequestImageAttachment,
   type SaveImageAttachment,
   type StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
 import LlmRuntime, { createUserMessage } from '@deepseek-ai/dsh-llm'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
-import { BUILTIN_IMAGE_LOSSLESS_PROTOCOLS } from '../src/host/model-catalog.js'
+import { BUILTIN_IMAGE_REQUEST_PROTOCOLS } from '../src/host/model-catalog.js'
 
 const IMAGE_BYTES = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
 const IMAGE_BASE64 = Buffer.from(IMAGE_BYTES).toString('base64')
@@ -28,6 +31,7 @@ class FixtureAttachmentStore extends AttachmentStore {
     maxImagesPerMessage: 10,
     maxMessageImageBytes: 50 * 1024 * 1024,
     maxImagePixels: 1_000_000,
+    maxImageDimension: 8192,
     mediaTypes: ['image/png'],
   }
 
@@ -41,6 +45,21 @@ class FixtureAttachmentStore extends AttachmentStore {
 
   readImage(_ref: ImageAttachmentRef): Promise<StoredImageAttachment> {
     return Promise.resolve({ ref: IMAGE_REF, data: IMAGE_BYTES })
+  }
+
+  override readImageRequest(_ref: ImageAttachmentRef, _policy: ImageRequestPolicy): Promise<RequestImageAttachment> {
+    return Promise.resolve({
+      variantId: ImageVariantId(`sha256:${'b'.repeat(64)}`),
+      attachment: IMAGE_REF,
+      data: IMAGE_BYTES,
+      mediaType: 'image/png',
+      bytes: IMAGE_BYTES.byteLength,
+      width: 1,
+      height: 1,
+      depth: 'uchar',
+      space: 'srgb',
+      hasAlpha: false,
+    })
   }
 }
 
@@ -58,9 +77,9 @@ afterEach(async () => {
   })))
 })
 
-describe('DSH rc.7 pi-ai wire fixtures', () => {
+describe('DSH 0.1.1-rc.2 pi-ai wire fixtures', () => {
   it('pins the complete built-in image evidence allowlist', () => {
-    expect(BUILTIN_IMAGE_LOSSLESS_PROTOCOLS).toEqual([
+    expect(BUILTIN_IMAGE_REQUEST_PROTOCOLS).toEqual([
       'openai-completions',
       'openai-responses',
       'anthropic-messages',
@@ -73,6 +92,7 @@ describe('DSH rc.7 pi-ai wire fixtures', () => {
       expectedPath: '/v1/chat/completions',
       expectedContent: [
         { type: 'text', text: 'before' },
+        { type: 'text', text: `Image ${IMAGE_REF.attachmentId}; request image 1x1px.` },
         { type: 'image_url', image_url: { url: `data:image/png;base64,${IMAGE_BASE64}` } },
         { type: 'text', text: 'after' },
       ],
@@ -82,6 +102,7 @@ describe('DSH rc.7 pi-ai wire fixtures', () => {
       expectedPath: '/v1/responses',
       expectedContent: [
         { type: 'input_text', text: 'before' },
+        { type: 'input_text', text: `Image ${IMAGE_REF.attachmentId}; request image 1x1px.` },
         { type: 'input_image', detail: 'auto', image_url: `data:image/png;base64,${IMAGE_BASE64}` },
         { type: 'input_text', text: 'after' },
       ],
@@ -91,6 +112,7 @@ describe('DSH rc.7 pi-ai wire fixtures', () => {
       expectedPath: '/v1/messages',
       expectedContent: [
         { type: 'text', text: 'before' },
+        { type: 'text', text: `Image ${IMAGE_REF.attachmentId}; request image 1x1px.` },
         {
           type: 'image',
           source: { type: 'base64', media_type: 'image/png', data: IMAGE_BASE64 },
@@ -98,7 +120,7 @@ describe('DSH rc.7 pi-ai wire fixtures', () => {
         { type: 'text', text: 'after', cache_control: { type: 'ephemeral' } },
       ],
     },
-  ] as const)('preserves bytes and order for $protocol', async fixture => {
+  ] as const)('uses the normalized request image and preserves order for $protocol', async fixture => {
     process.env.MODEL_PK_FIXTURE_KEY = 'fixture-key'
     let resolveCaptured!: (value: CapturedRequest) => void
     const captured = new Promise<CapturedRequest>(resolve => { resolveCaptured = resolve })

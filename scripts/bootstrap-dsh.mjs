@@ -26,7 +26,7 @@ if (!skipBuild) {
   runNodeCli(pnpmEntry, ['build'])
 }
 const version = runNodeCli(dshEntry, ['--version'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim()
-if (version !== '0.1.0-rc.7') throw new Error(`Model PK requires DSH 0.1.0-rc.7, found ${version}`)
+if (version !== '0.1.1-rc.2') throw new Error(`Model PK requires DSH 0.1.1-rc.2, found ${version}`)
 runNodeCli(dshEntry, ['plugin', '--profile', profile, 'add', root])
 
 console.log('')

@@ -20,10 +20,10 @@ interface PiAiBuiltinModelFacts {
 }
 
 /**
- * Protocols whose exact rc.7 Adapter/serializer wire shape is covered by the
- * byte-preservation fixtures in tests/adapter-fixtures.spec.ts.
+ * pi-ai protocols whose normalized request-image wire shape is covered by the
+ * adapter fixtures in tests/adapter-fixtures.spec.ts.
  */
-export const BUILTIN_IMAGE_LOSSLESS_PROTOCOLS = Object.freeze([
+export const BUILTIN_IMAGE_REQUEST_PROTOCOLS = Object.freeze([
   'openai-completions',
   'openai-responses',
   'anthropic-messages',
@@ -31,7 +31,7 @@ export const BUILTIN_IMAGE_LOSSLESS_PROTOCOLS = Object.freeze([
 
 export interface AdapterEvidence {
   readonly piAiProtocolByModel?: Readonly<Record<string, string>>
-  readonly imageLosslessProtocols?: readonly string[]
+  readonly imageRequestProtocols?: readonly string[]
 }
 
 export class ModelCatalog {
@@ -158,7 +158,8 @@ export class ModelCatalog {
 
   isImagePathVerified(snapshot: ModelConfigSnapshot): boolean {
     if (!snapshot.inputModalities.includes('image')) return false
-    return (this.evidence.imageLosslessProtocols ?? BUILTIN_IMAGE_LOSSLESS_PROTOCOLS)
+    if (snapshot.protocol === 'deepseek-chat') return true
+    return (this.evidence.imageRequestProtocols ?? BUILTIN_IMAGE_REQUEST_PROTOCOLS)
       .includes(snapshot.protocol)
   }
 
@@ -293,7 +294,7 @@ function resolveOutputTokenCapacity(input: {
   if (isPositiveInteger(override?.maxTokens)) return override.maxTokens
   if (isPositiveInteger(input.profile?.defaultMaxTokens)) return input.profile.defaultMaxTokens
 
-  // dsh-llm-pi-ai@0.1.0-rc.7 materializes this exact capability for a
+  // dsh-llm-pi-ai@0.1.1-rc.2 materializes this exact capability for a
   // configured non-catalog model when neither the entry nor profile sets it.
   return PI_AI_DEFAULT_MAX_TOKENS
 }

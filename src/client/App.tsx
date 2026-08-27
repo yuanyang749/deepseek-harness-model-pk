@@ -3,6 +3,15 @@ import { createPortal } from 'react-dom'
 import type { Attempt, DraftUpdateRequest, ExperimentProjection, ModelListItem, PreflightSnapshot, Run } from '../contracts/types.js'
 import { LIMITS } from '../contracts/constants.js'
 import type { ModelPkUiController, UiScreen, UiSnapshot } from './controller.js'
+import {
+  buildExperimentReport,
+  exportExperimentReportPng,
+  formatReportDuration,
+  formatReportNumber,
+  loadQualityRanking,
+  saveQualityRanking,
+  type ExperimentReportRow,
+} from './report.js'
 import { MODEL_PK_CSS } from './styles.js'
 
 export function ModelPkSettingsSection({ controller }: { controller: ModelPkUiController }): JSX.Element {
@@ -319,16 +328,18 @@ function CreatePage({ snapshot, controller }: { snapshot: UiSnapshot; controller
                 <select className="mpk-select" aria-label="并发数" value={Math.min(form.concurrency, Math.max(1, selectedCount))} onChange={event => setField('concurrency', Number(event.target.value))}>{Array.from({ length: Math.max(1, selectedCount) }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value}</option>)}</select>
                 <small className="mpk-meta">同时执行的路数，默认 min(4, N)。排队不计入 30 分钟时限。</small>
               </label>
-              <button className="mpk-btn mpk-btn-block" type="button" disabled={!canPreflight} onClick={() => { void preflight() }}>{needsResultRoot ? '保存目录并预检' : '预检并继续'}</button>
-              <button
-                className="mpk-text-btn"
-                type="button"
-                onClick={() => {
-                  if (confirm('清空当前填写的名称、提示词、图片、起始文件和模型选择，重新开始一份对照？已开始的实验不会被删除。')) {
-                    void controller.newDraft()
-                  }
-                }}
-              >清空并重新填写</button>
+              <div className="mpk-rail-actions">
+                <button
+                  className="mpk-btn mpk-btn-secondary"
+                  type="button"
+                  onClick={() => {
+                    if (confirm('清空当前填写的名称、提示词、图片、起始文件和模型选择，重新开始一份对照？已开始的实验不会被删除。')) {
+                      void controller.newDraft()
+                    }
+                  }}
+                >清空并重新填写</button>
+                <button className="mpk-btn" type="button" disabled={!canPreflight} onClick={() => { void preflight() }}>{needsResultRoot ? '保存目录并预检' : '预检并继续'}</button>
+              </div>
             </div>
           </div>
         </aside>
@@ -593,7 +604,7 @@ function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; contro
           <span>纯文本或单个文本文件可双栏对照；多文件、删除或二进制产物显示工程变更摘要。</span>
         </div>
         {experiment.recoveryNotice ? <div className="mpk-alert" role="status"><strong>正在恢复</strong>{experiment.recoveryNotice}</div> : null}
-        <div className="mpk-run-grid">{experiment.runs.map(run => <RunCard key={run.runId} run={run} experiment={experiment} events={snapshot.events} selected={compare} onToggleCompare={toggleCompare} controller={controller} />)}</div>
+        <div className="mpk-run-grid">{experiment.runs.map(run => <RunCard key={run.runId} run={run} experiment={experiment} selected={compare} onToggleCompare={toggleCompare} controller={controller} />)}</div>
         {comparison.length > 0 ? (
           <section className="mpk-card">
             <h2 className="mpk-section-title">文本结果双栏对照 <span className="mpk-pill">不评分 · 不排序</span></h2>
@@ -614,10 +625,8 @@ function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; contro
   )
 }
 
-function RunCard(props: { run: Run; experiment: ExperimentProjection; events: UiSnapshot['events']; selected: readonly string[]; onToggleCompare(id: string): void; controller: ModelPkUiController }): JSX.Element {
+function RunCard(props: { run: Run; experiment: ExperimentProjection; selected: readonly string[]; onToggleCompare(id: string): void; controller: ModelPkUiController }): JSX.Element {
   const latest = props.run.attempts.find(attempt => attempt.attemptId === props.run.latestAttemptId)!
-  const allRunEvents = props.events.filter(event => event.attemptId !== null && props.run.attempts.some(attempt => attempt.attemptId === event.attemptId))
-  const runEvents = allRunEvents.slice(-100)
   const cancellable = ['QUEUED', 'PREPARING', 'DISPATCHING', 'RUNNING', 'RECOVERING'].includes(latest.state)
   const retryable = ['TIMED_OUT', 'STALLED', 'DISCONNECTED'].includes(latest.state) || latest.state === 'FAILED' && (latest.error?.retryable ?? false)
   return (
@@ -654,7 +663,6 @@ function RunCard(props: { run: Run; experiment: ExperimentProjection; events: Ui
           </div>
         ))}</div>
       </details>
-      <details><summary className="mpk-section-title">日志与事件（最近 {runEvents.length} 条{allRunEvents.length > runEvents.length ? ` / 共 ${allRunEvents.length}` : ''}）</summary><p className="mpk-meta">界面只展示最近 100 条。完整记录保存在插件内部归档。</p><div className="mpk-event-list">{runEvents.map(event => <div className="mpk-event" key={event.cursor}><span>#{event.cursor}</span><span>{eventKindLabel(event.kind)}</span></div>)}</div></details>
       <details><summary className="mpk-section-title">产物与诊断</summary><p className="mpk-meta">文本结果会自动导出；完整工作区按需导出，避免重复占用磁盘。</p><pre className="mpk-mono">{JSON.stringify({ archiveCompleteness: latest.archiveCompleteness, workspaceSealState: latest.workspaceSealState, workspaceSummary: latest.workspaceSummary, tokenUsage: latest.tokenUsage, resultPath: latest.resultPath, resultExportError: latest.resultExportError, error: latest.error, archiveError: latest.archiveError, providerRequestId: latest.providerRequestId, fingerprints: { input: latest.inputFingerprint, effectiveInput: latest.effectiveInputHash, harness: latest.resolvedHarnessFingerprint } }, null, 2)}</pre></details>
     </article>
   )
@@ -737,7 +745,156 @@ function fileChangeLabel(value: 'ADDED' | 'MODIFIED' | 'DELETED'): string {
 }
 
 function StoragePage({ snapshot, controller }: { snapshot: UiSnapshot; controller: ModelPkUiController }): JSX.Element {
-  return <section className="mpk-page mpk-page-narrow"><div className="mpk-titlebar"><div><div className="mpk-kicker">Owner-only local archive</div><h1>本地存储管理</h1><p>这里管理插件内部归档；删除归档不会删除已经导出到用户目录的结果。</p></div><button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.loadStorage() }}>刷新</button></div><div className="mpk-card">{snapshot.storage.length === 0 ? <div className="mpk-empty">没有可管理的终态实验</div> : <table className="mpk-table"><thead><tr><th>实验</th><th>状态</th><th>时间</th><th>占用</th><th>操作</th></tr></thead><tbody>{snapshot.storage.map(item => <tr key={item.experimentId}><td><strong>{item.name}</strong><div className="mpk-meta">{item.experimentId}</div></td><td>{item.lifecycleState}<div className="mpk-meta">{item.outcome ?? '—'}</div></td><td>{formatDate(item.settledAt ?? item.createdAt)}</td><td>{formatBytes(item.byteLength)}</td><td><div className="mpk-actions"><button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.openFolder(item.experimentId) }}>打开结果</button><button className="mpk-btn mpk-btn-danger mpk-btn-small" disabled={!item.canDelete} title={item.blockedReason ?? ''} type="button" onClick={() => { if (confirm(`永久删除“${item.name}”的插件内部 Prompt、附件、证据和归档？已导出的用户结果会保留。`)) void controller.deleteExperiment(item.experimentId) }}>删除内部归档</button></div></td></tr>)}</tbody></table>}</div></section>
+  const [reportExperiment, setReportExperiment] = useState<ExperimentProjection | null>(null)
+  const openReport = async (experimentId: string): Promise<void> => {
+    const experiment = await controller.loadExperimentReport(experimentId)
+    if (experiment !== null) setReportExperiment(experiment)
+  }
+  return (
+    <section className="mpk-page mpk-page-narrow">
+      <div className="mpk-titlebar">
+        <div><div className="mpk-kicker">Owner-only local archive</div><h1>本地存储管理</h1><p>这里管理插件内部归档；删除归档不会删除已经导出到用户目录的结果。</p></div>
+        <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.loadStorage() }}>刷新</button>
+      </div>
+      <div className="mpk-card">
+        {snapshot.storage.length === 0 ? <div className="mpk-empty">没有可管理的终态实验</div> : (
+          <table className="mpk-table mpk-storage-table">
+            <thead><tr><th>实验</th><th>状态</th><th>时间</th><th>占用</th><th>操作</th></tr></thead>
+            <tbody>{snapshot.storage.map(item => (
+              <tr key={item.experimentId}>
+                <td><strong>{item.name}</strong><div className="mpk-meta">{item.experimentId}</div></td>
+                <td>{item.lifecycleState}<div className="mpk-meta">{item.outcome ?? '—'}</div></td>
+                <td>{formatDate(item.settledAt ?? item.createdAt)}</td>
+                <td>{formatBytes(item.byteLength)}</td>
+                <td><div className="mpk-actions mpk-storage-actions">
+                  <button className="mpk-btn mpk-btn-secondary mpk-btn-small" type="button" onClick={() => { void controller.openFolder(item.experimentId) }}>打开结果</button>
+                  <button className="mpk-btn mpk-btn-small mpk-btn-report" type="button" aria-label={`生成“${item.name}”的实验报告`} onClick={() => { void openReport(item.experimentId) }}>实验报告</button>
+                  <button className="mpk-btn mpk-btn-danger mpk-btn-small" disabled={!item.canDelete} title={item.blockedReason ?? ''} type="button" onClick={() => { if (confirm(`永久删除“${item.name}”的插件内部 Prompt、附件、证据和归档？已导出的用户结果会保留。`)) void controller.deleteExperiment(item.experimentId) }}>删除内部归档</button>
+                </div></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      </div>
+      {reportExperiment === null ? null : <ExperimentReportDialog key={reportExperiment.experimentId} experiment={reportExperiment} onClose={() => setReportExperiment(null)} />}
+    </section>
+  )
+}
+
+function ExperimentReportDialog({ experiment, onClose }: { experiment: ExperimentProjection; onClose(): void }): JSX.Element {
+  const [ranking, setRanking] = useState<readonly string[]>(() => loadQualityRanking(experiment))
+  const [draggedRunId, setDraggedRunId] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const report = useMemo(() => buildExperimentReport(experiment, ranking), [experiment, ranking])
+
+  const move = (runId: string, offset: -1 | 1): void => {
+    setFeedback(null)
+    setRanking(current => {
+      const next = [...current]
+      const from = next.indexOf(runId)
+      const to = from + offset
+      if (from < 0 || to < 0 || to >= next.length) return current
+      next.splice(from, 1)
+      next.splice(to, 0, runId)
+      return next
+    })
+  }
+  const dropBefore = (targetRunId: string): void => {
+    if (draggedRunId === null || draggedRunId === targetRunId) return
+    setFeedback(null)
+    setRanking(current => {
+      const next = current.filter(runId => runId !== draggedRunId)
+      const targetIndex = next.indexOf(targetRunId)
+      next.splice(targetIndex < 0 ? next.length : targetIndex, 0, draggedRunId)
+      return next
+    })
+    setDraggedRunId(null)
+  }
+  const save = (): void => {
+    setRanking(saveQualityRanking(experiment, ranking))
+    setFeedback('排名已保存')
+  }
+  const exportPng = async (): Promise<void> => {
+    setExporting(true)
+    setFeedback(null)
+    try {
+      const saved = saveQualityRanking(experiment, ranking)
+      setRanking(saved)
+      await exportExperimentReportPng(buildExperimentReport(experiment, saved))
+      setFeedback('PNG 报告已导出')
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'PNG 报告导出失败')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return (
+    <div className="mpk-modal-backdrop mpk-report-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+      <section className="mpk-report-modal" role="dialog" aria-modal="true" aria-label={`实验报告 · ${experiment.name}`}>
+        <header className="mpk-report-header">
+          <div>
+            <div className="mpk-report-eyebrow">MODEL PK / EVALUATION LEDGER</div>
+            <h2>{experiment.name}</h2>
+            <p>{formatDate(experiment.settledAt ?? experiment.createdAt)} · {report.rows.length} 个模型 · {outcomeLabel(experiment.outcome)}</p>
+          </div>
+          <button className="mpk-report-close" type="button" onClick={onClose} aria-label="关闭实验报告">×</button>
+        </header>
+
+        <div className="mpk-report-intro">
+          <div><strong>人工质量排名</strong><span>拖拽整行，或使用上下箭头调整模型输出质量顺序。</span></div>
+          <div className="mpk-report-facts"><span>{report.rows.filter(row => row.state === 'SUCCEEDED').length} 个成功</span><span>{formatReportNumber(sumReportTokens(report.rows))} Token</span></div>
+        </div>
+
+        <div className="mpk-report-table-wrap">
+          <table className="mpk-report-table">
+            <thead><tr><th>排名</th><th>模型</th><th>状态</th><th>用时</th><th>首次响应</th><th>请求</th><th>输入 Token</th><th>输出 Token</th><th>缓存读取</th><th>总 Token</th><th>产物</th><th>重试</th><th aria-label="排序操作" /></tr></thead>
+            <tbody>{report.rows.map(row => (
+              <tr key={row.runId} draggable onDragStart={() => setDraggedRunId(row.runId)} onDragEnd={() => setDraggedRunId(null)} onDragOver={event => event.preventDefault()} onDrop={() => dropBefore(row.runId)} data-dragged={draggedRunId === row.runId}>
+                <td><span className={`mpk-rank mpk-rank-${Math.min(row.rank, 4)}`}>{row.rank}</span></td>
+                <td><strong>{row.modelName}</strong><span className="mpk-report-provider">{row.providerName}</span></td>
+                <td><span className={`mpk-report-state mpk-report-state-${row.state === 'SUCCEEDED' ? 'ok' : 'bad'}`}>{attemptStateLabel(row.state)}</span></td>
+                <td>{formatReportDuration(row.durationMs)}</td>
+                <td>{formatReportDuration(row.firstResponseMs)}</td>
+                <td>{formatReportNumber(row.requestCount)}</td>
+                <td>{formatReportNumber(row.inputTokens)}</td>
+                <td>{formatReportNumber(row.outputTokens)}</td>
+                <td>{formatReportNumber(row.cacheReadTokens)}</td>
+                <td><strong>{formatReportNumber(row.totalTokens)}</strong></td>
+                <td>{row.changedFileCount === null ? '—' : `${row.changedFileCount} 文件`}</td>
+                <td>{Math.max(0, row.attemptCount - 1)}</td>
+                <td><div className="mpk-rank-actions">
+                  <span className="mpk-drag-handle" aria-hidden="true">⠿</span>
+                  <button type="button" disabled={row.rank === 1} onClick={() => move(row.runId, -1)} aria-label={`将 ${row.modelName} 上移`}>↑</button>
+                  <button type="button" disabled={row.rank === report.rows.length} onClick={() => move(row.runId, 1)} aria-label={`将 ${row.modelName} 下移`}>↓</button>
+                </div></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+
+        <div className="mpk-ranking-preview">
+          <span>模型输出质量优先级</span>
+          <strong>{report.rankingLabel}</strong>
+          <small>由用户根据实际输出人工评定，不代表平台自动评分。</small>
+        </div>
+
+        <footer className="mpk-report-footer">
+          <div className="mpk-report-feedback" role="status">{feedback ?? 'PNG 将以 2× 清晰度导出，适合保存和分享。'}</div>
+          <div className="mpk-actions">
+            <button className="mpk-btn mpk-btn-secondary" type="button" onClick={onClose}>取消</button>
+            <button className="mpk-btn mpk-btn-secondary" type="button" onClick={save}>保存排名</button>
+            <button className="mpk-btn mpk-btn-report" type="button" disabled={exporting} onClick={() => { void exportPng() }}>{exporting ? '正在生成…' : '导出 PNG 报告'}</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  )
+}
+
+function sumReportTokens(rows: readonly ExperimentReportRow[]): number | null {
+  return rows.reduce<number | null>((sum, row) => row.totalTokens === null ? sum : (sum ?? 0) + row.totalTokens, null)
 }
 
 function Stat({ label, value }: { label: string; value: string }): JSX.Element {
@@ -777,17 +934,6 @@ function attemptStateLabel(state: Attempt['state']): string {
 
 function triggerLabel(trigger: Attempt['trigger']): string {
   return { INITIAL: '首次', RETRY: '重试', RUN_AGAIN: '再跑', RETRY_FAILED: '批量重试' }[trigger]
-}
-
-function eventKindLabel(kind: string): string {
-  return {
-    ATTEMPT_RUNTIME_EVENT: '运行事件',
-    ATTEMPT_OUTPUT_DELTA: '输出增量',
-    ATTEMPT_STATE_CHANGED: '状态变化',
-    ATTEMPT_FINALIZED: '执行完成',
-    DISPATCH_INTENT_RECORDED: '记录派发',
-    DISPATCH_ACK_RECORDED: '派发确认',
-  }[kind] ?? kind
 }
 
 function checkTable(check: { readonly id: string; readonly diagnostics?: Readonly<Record<string, unknown>>; readonly error?: { readonly details?: Readonly<Record<string, unknown>> } }): { readonly headers: readonly string[]; readonly rows: readonly (readonly string[])[] } {

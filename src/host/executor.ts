@@ -304,22 +304,20 @@ export class AttemptExecutor {
     if (experiment.taskPackage.attachments.length === 0) return []
     const store = this.ctx.attachments
     if (store?.saveImages === undefined || store.readImage === undefined) {
-      throw new ModelPkException(modelPkError('ATTACHMENT_TRANSFORM_UNVERIFIED', 'prepare', 'DSH 附件服务缺少无损读回能力', 'saveImages/readImage unavailable'))
+      throw new ModelPkException(modelPkError('ATTACHMENT_TRANSFORM_UNVERIFIED', 'prepare', 'DSH 附件服务缺少规范化读回能力', 'saveImages/readImage unavailable'))
     }
     const sources = await Promise.all(experiment.taskPackage.attachments.map(async attachment => {
       const data = await readFile(this.archive.experimentAttachmentPath(experiment, attachment.ordinal, attachment.name))
       if (sha256Bytes(data) !== attachment.hash) {
         throw new ModelPkException(modelPkError('ATTACHMENT_HASH_MISMATCH', 'prepare', '图片哈希不匹配', `attachment=${attachment.attachmentId}`))
       }
-      return { data, mediaType: attachment.mimeType, name: attachment.name, expectedHash: attachment.hash }
+      return { data, mediaType: attachment.mimeType, name: attachment.name }
     }))
     const refs = await store.saveImages(sources.map(({ data, mediaType, name }) => ({ data, mediaType, name })))
     if (refs.length !== sources.length) throw new Error('attachment store changed batch cardinality')
     for (const [index, reference] of refs.entries()) {
       const stored = await store.readImage(reference)
-      if (sha256Bytes(stored.data) !== sources[index]!.expectedHash) {
-        throw new ModelPkException(modelPkError('ATTACHMENT_CONTENT_TRANSFORMED', 'prepare', '图片在 Adapter 路径中发生变化', `attachment ordinal=${index}`))
-      }
+      assertCanonicalAttachmentReadback(reference, stored, index)
     }
     return refs
   }
@@ -458,6 +456,20 @@ export class AttemptExecutor {
       }),
     ]
   }
+}
+
+export function assertCanonicalAttachmentReadback(
+  reference: unknown,
+  stored: { readonly ref: unknown; readonly data: Uint8Array },
+  ordinal?: number,
+): void {
+  if (canonicalize(stored.ref) === canonicalize(reference)) return
+  throw new ModelPkException(modelPkError(
+    'ATTACHMENT_CONTENT_TRANSFORMED',
+    'prepare',
+    'DSH 图片规范化引用校验失败',
+    `canonical attachment reference changed after verified readback${ordinal === undefined ? '' : `; ordinal=${ordinal}`}`,
+  ))
 }
 
 class EvidenceWriter {

@@ -249,7 +249,7 @@ V1 只提供 Fair Mode，用户不能关闭。每个 Run 必须满足：
 
 - 相同用户 Prompt 原文。
 - 相同逻辑系统提示词。
-- 相同图片字节、数量和顺序。
+- 相同原始图片字节、数量和顺序，并向所有 Run 传入同一 DSH 规范化附件引用。
 - 相同 workspace baseline snapshot。
 - 相同 DSH Agent Loop 与 Harness Profile。
 - 相同工具清单、工具描述和权限规则。
@@ -262,11 +262,11 @@ V1 只提供 Fair Mode，用户不能关闭。每个 Run 必须满足：
 ### 6.2 图片公平性
 
 - “相同图片”指相同原始字节与相同顺序，不只是文件名相同。
-- 插件不得为某个模型单独压缩、转码、OCR、描述图片、删图或换序。
+- 插件不得为某个模型单独压缩、转码、OCR、描述图片、删图或换序；DSH 锁定 Adapter 按冻结路由能力派生的确定性请求版本属于被测模型路径的一部分。
 - 内部可以按内容 hash 去重存储，但 manifest 必须保留用户提交的完整有序序列。
-- 插件向每个 Run 传入的必须是同一不可变图片字节或同一 content-addressed reference。Provider Adapter 为协议所做的 base64、multipart 等无损封装差异可以存在，但必须记录 Adapter 版本。
-- V1 Strict Fair Mode 不允许缩放、重压缩、裁剪、格式转换等改变图片字节或视觉内容的有损转换；即使某个统一规则可以应用到所有 Run，也必须以 ATTACHMENT_CONTENT_TRANSFORMED 硬阻断。允许统一有损预处理只可作为未来另行定义的模式，不能在 V1 静默放行。
-- 图片任务中，每个 Adapter 必须提供可观察的 effectiveContentHash，或提供被版本锁定并有测试证明的 lossless adapter contract。两者都没有时必须以 ATTACHMENT_TRANSFORM_UNVERIFIED 硬阻断，不能作为可确认 WARNING 放行。
+- 插件向每个 Run 传入的必须是同一 content-addressed DSH 规范化引用；原始字节仍由 Task Package hash 和插件归档独立校验。Provider Adapter 可按冻结模型路由的像素与字节预算派生确定性请求版本，但必须锁定 DSH/Adapter 版本和非敏感配置。
+- V1 Strict Fair Mode 不允许插件层执行逐模型图片变换。DSH `0.1.1-rc.2` 的 provider-independent 规范化及锁定 Adapter 的确定性请求投影属于端到端模型路由能力，必须由规范化引用读回和版本化 wire fixture 证明，不能静默回退到未验证路径。
+- 图片任务中，每个 Adapter 必须提供可观察的请求版本身份，或提供被版本锁定并有测试证明的确定性请求投影契约。两者都没有时必须以 ATTACHMENT_TRANSFORM_UNVERIFIED 硬阻断，不能作为可确认 WARNING 放行。
 - 包含图片时，只允许原生支持 image input 的模型通过 Preflight。
 - 不得用另一个视觉模型先解释图片再把文字交给纯文本模型。
 
@@ -529,7 +529,7 @@ Preflight 至少检查：
 - DSH 能为每个 Attempt 创建不复用历史上下文、记忆与可写运行环境的全新 session；无法证明时硬阻断。
 - Runner sandbox 必须保证即使旧执行失联或成为 orphan，也只能触达其自身 workspace，不能访问兄弟或后续 Attempt 的路径；无法证明跨 Attempt 路径隔离时硬阻断。
 - 图片格式、数量、大小和上下文限制可接受。
-- 图片 Adapter 可以通过 effectiveContentHash 或版本锁定的 lossless contract 证明未做模型专属内容变换。
+- 图片 Adapter 可以通过请求版本身份或版本锁定的确定性投影契约证明输入处理可复现。
 - 公共参数、输出上限和超时策略可被执行。
 - workspace baseline 可读取并可物化。
 - 实验与归档目录可写。
@@ -1497,7 +1497,7 @@ deepseek-harness-model-pk/
 
 ### AC-043：图片内容转换可检测
 
-**Given** 一个测试 Adapter 会只为某一路缩放或重压缩图片，或既无 effectiveContentHash 也无版本锁定的 lossless contract<br>
+**Given** 一个测试 Adapter 会在冻结路由规则之外只为某一路变换图片，或既无请求版本身份也无版本锁定的确定性投影契约<br>
 **When** Preflight 可预知该行为，或运行时产生 effectiveAttachments<br>
 **Then** Preflight 分别以 ATTACHMENT_CONTENT_TRANSFORMED 或 ATTACHMENT_TRANSFORM_UNVERIFIED 硬阻断；若只能运行时发现内容变化，则 Attempt 以 ATTACHMENT_CONTENT_TRANSFORMED 失败，不能作为公平结果完成。
 
