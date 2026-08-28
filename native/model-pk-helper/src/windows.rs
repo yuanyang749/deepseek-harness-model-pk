@@ -20,11 +20,15 @@ use windows_sys::Win32::Foundation::{
     ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
     WAIT_TIMEOUT,
 };
-use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+use windows_sys::Win32::Security::Authorization::{
+    ConvertSidToStringSidW, ConvertStringSidToSidW,
+};
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
-use windows_sys::Win32::Security::{FreeSid, PSID, SECURITY_CAPABILITIES};
+use windows_sys::Win32::Security::{
+    FreeSid, PSID, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
+};
 use windows_sys::Win32::Storage::FileSystem::{
     FileAllocationInfo, FindClose, FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard,
     GetFileInformationByHandle, MoveFileExW, SetFileInformationByHandle,
@@ -52,6 +56,7 @@ const SLOT_HEADER_BYTES: usize = 64;
 const SLOT_MAGIC: &[u8; 8] = b"MPKSLOT1";
 const FILE_READ_ATTRIBUTES_ACCESS: &str = "(RX)";
 const FILE_MODIFY_ACCESS_INHERITED: &str = "(OI)(CI)M";
+const SE_GROUP_ENABLED_ATTRIBUTE: u32 = 0x0000_0004;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "command", rename_all = "kebab-case")]
@@ -132,6 +137,8 @@ enum Request {
         command_text: String,
         timeout_ms: u64,
         output_limit: usize,
+        #[serde(default)]
+        network_access: bool,
     },
     SandboxCleanup {
         attempt_root: String,
@@ -268,7 +275,8 @@ fn run() -> Result<Value> {
                 "file-allocation",
                 "alternate-stream-rejection",
                 "appcontainer",
-                "job-object"
+                "job-object",
+                "sandbox-outbound-network"
             ]
         })),
         Request::Reserve { path, byte_length } => reserve(Path::new(&path), byte_length),
@@ -384,6 +392,7 @@ fn run() -> Result<Value> {
             command_text,
             timeout_ms,
             output_limit,
+            network_access,
         } => sandbox_run(
             Path::new(&attempt_root),
             Path::new(&workspace),
@@ -392,6 +401,7 @@ fn run() -> Result<Value> {
             &command_text,
             timeout_ms,
             output_limit,
+            network_access,
         ),
         Request::SandboxCleanup { attempt_root } => sandbox_cleanup(Path::new(&attempt_root)),
     }
@@ -904,6 +914,7 @@ fn sandbox_run(
     command_text: &str,
     timeout_ms: u64,
     output_limit: usize,
+    network_access: bool,
 ) -> Result<Value> {
     if output_limit == 0 || output_limit > 16 * 1024 * 1024 {
         return Err(Failure {
@@ -931,6 +942,7 @@ fn sandbox_run(
             temp,
             &script_path,
             timeout_ms,
+            network_access,
         );
         let stdout = read_shell_output(&stdout_path, output_limit)?;
         let stderr = read_shell_output(&stderr_path, output_limit)?;
@@ -1054,6 +1066,7 @@ fn launch_appcontainer_power_shell(
     temp: &Path,
     script_path: &Path,
     timeout_ms: u64,
+    network_access: bool,
 ) -> Result<(Option<u32>, bool)> {
     let system_root = std::env::var_os("SystemRoot").ok_or_else(|| Failure {
         code: "SANDBOX_ENVIRONMENT_INVALID",
@@ -1089,10 +1102,21 @@ fn launch_appcontainer_power_shell(
     let powershell_w = wide_string(powershell.as_os_str());
     let cwd_w = wide_string(workspace.as_os_str());
 
+    let internet_client = if network_access {
+        Some(LocalSid::from_string("S-1-15-3-1")?)
+    } else {
+        None
+    };
+    let mut capability = internet_client.as_ref().map(|sid| SID_AND_ATTRIBUTES {
+        Sid: sid.sid,
+        Attributes: SE_GROUP_ENABLED_ATTRIBUTE,
+    });
     let mut security_capabilities = SECURITY_CAPABILITIES {
         AppContainerSid: profile.sid,
-        Capabilities: null_mut(),
-        CapabilityCount: 0,
+        Capabilities: capability
+            .as_mut()
+            .map_or(null_mut(), |item| item as *mut SID_AND_ATTRIBUTES),
+        CapabilityCount: u32::from(capability.is_some()),
         Reserved: 0,
     };
     let mut attribute_size = 0usize;
@@ -1247,6 +1271,33 @@ fn launch_appcontainer_power_shell(
 struct AppContainerProfile {
     sid: PSID,
     sid_string: String,
+}
+
+struct LocalSid {
+    sid: PSID,
+}
+
+impl LocalSid {
+    fn from_string(value: &str) -> Result<Self> {
+        let wide = wide_string(OsStr::new(value));
+        let mut sid: PSID = null_mut();
+        if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut sid) } == 0 || sid.is_null() {
+            return Err(failure(
+                "SANDBOX_CAPABILITY_SID_FAILED",
+                io::Error::last_os_error(),
+            ));
+        }
+        Ok(Self { sid })
+    }
+}
+
+impl Drop for LocalSid {
+    fn drop(&mut self) {
+        if !self.sid.is_null() {
+            unsafe { LocalFree(self.sid) };
+            self.sid = null_mut();
+        }
+    }
 }
 
 impl AppContainerProfile {

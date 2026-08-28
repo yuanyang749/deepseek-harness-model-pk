@@ -2,7 +2,7 @@ import type { DshHostContext } from './host/dsh.js'
 import { ModelPkRuntime, type Config } from './host/runtime.js'
 
 export const name = 'model-pk'
-export const inject = ['connection', 'llm', 'agents', 'settings', 'attachments']
+export const inject = ['connection', 'llm', 'agents', 'settings', 'attachments', 'sessionTitle', 'permissionPresets']
 
 export function apply(ctx: DshHostContext, config: Config = {}): void {
   if (ctx.effect === undefined) throw new Error('Model PK requires the DSH Cordis effect lifecycle')

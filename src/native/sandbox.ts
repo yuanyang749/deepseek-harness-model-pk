@@ -30,6 +30,7 @@ export class SandboxRunner {
   constructor(private readonly helper: NativeHelper) {}
 
   async available(): Promise<boolean> {
+    if (!this.helper.probe.version.features.includes('sandbox-outbound-network')) return false
     if (process.platform === 'win32') {
       return this.helper.probe.version.features.includes('appcontainer')
         && this.helper.probe.version.features.includes('job-object')
@@ -48,7 +49,7 @@ export class SandboxRunner {
       return Object.freeze({
         engine: 'windows-appcontainer',
         default: 'deny',
-        network: 'deny-all-no-capabilities',
+        network: 'outbound-allowed',
         process: 'job-object-kill-on-close',
         readable: ['$WINDOWS_RUNTIME', '$WORKSPACE', '$PRIVATE_HOME', '$PRIVATE_TMP'],
         writable: ['$WORKSPACE', '$PRIVATE_HOME', '$PRIVATE_TMP'],
@@ -59,7 +60,7 @@ export class SandboxRunner {
     return Object.freeze({
       engine: 'macos-seatbelt',
       default: 'deny',
-      network: 'deny-all',
+      network: 'outbound-allowed',
       process: 'allow-child-processes',
         readable: ['$ATTEMPT_ROOT', '/', '/System', '/usr', '/bin', '/sbin', '/Library/Apple'],
       writable: ['$WORKSPACE', '$PRIVATE_HOME', '$PRIVATE_TMP'],
@@ -73,7 +74,7 @@ export class SandboxRunner {
   }
 
   contractVersion(): string {
-    return process.platform === 'win32' ? 'model-pk-appcontainer-v1' : 'model-pk-seatbelt-v1'
+    return process.platform === 'win32' ? 'model-pk-appcontainer-v2' : 'model-pk-seatbelt-v2'
   }
 
   async prepare(paths: SandboxPaths): Promise<void> {
@@ -100,6 +101,7 @@ export class SandboxRunner {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         timeoutMs: options.timeoutMs ?? LIMITS.executionTimeoutMs,
         outputLimit: OUTPUT_LIMIT,
+        allowNetwork: true,
       })
       return redactResult(result, paths)
     }
@@ -193,6 +195,10 @@ function seatbeltPolicy(paths: SandboxPaths): string {
   (subpath "/bin")
   (subpath "/sbin")
   (subpath "/Library/Apple")
+  (subpath "/private/etc/ssl")
+  (literal "/private/etc/hosts")
+  (literal "/private/etc/resolv.conf")
+  (literal "/private/etc/services")
   (literal "/")
   (literal "/dev/null")
   (literal "/dev/urandom")
@@ -202,7 +208,7 @@ function seatbeltPolicy(paths: SandboxPaths): string {
   (subpath ${home})
   (subpath ${temp})
   (literal "/dev/null"))
-(deny network*)
+(allow network*)
 `
 }
 

@@ -19,6 +19,7 @@ import type {
   DshAgentHandle,
   DshContentBlock,
   DshHostContext,
+  DshSession,
   DshToolDefinition,
   DshUserMessage,
 } from './dsh.js'
@@ -103,6 +104,7 @@ export class AttemptExecutor {
     let lastAssistantText = ''
     let executionError: ModelPkError | null = null
     let cancelled = false
+    let retainSessionInSidebar = false
     const sessionId = attempt.attemptId
     let activeObserver: ExecutionObserver | null = null
     const offSession = this.ctx.on('session/event', (session: unknown, event: unknown) => {
@@ -149,6 +151,7 @@ export class AttemptExecutor {
         },
       })
       assertFreshSession(handle.agent.session)
+      setPkSessionTitle(this.ctx, handle.agent.session, experiment.name, run.modelConfig.modelName)
       const currentHandle = handle
       let disposed = false
       const prepared: PreparedExecution = {
@@ -171,6 +174,7 @@ export class AttemptExecutor {
             currentHandle.agent.followup(message)
             await observer.onDispatchAck()
             await currentHandle.agent.whenIdle()
+            retainSessionInSidebar = true
             await evidence.flush()
             if (cancelled || signal.aborted) {
               return {
@@ -231,7 +235,7 @@ export class AttemptExecutor {
           offSession()
           await evidence.flush()
           try {
-            await currentHandle.dispose()
+            await releasePkSession(currentHandle, retainSessionInSidebar)
           } finally {
             await this.sandbox.cleanup(sandboxPaths)
           }
@@ -283,6 +287,7 @@ export class AttemptExecutor {
       })
       if (handle.agent.id !== sessionId) throw new Error('agent/session id mismatch')
       assertFreshSession(handle.agent.session)
+      setPkSessionTitle(this.ctx, handle.agent.session, '执行环境检查', model)
       if (handle.agent.status !== 'idle') throw new Error('new session is not idle')
     } finally {
       await handle?.dispose().catch(() => undefined)
@@ -328,7 +333,7 @@ export class AttemptExecutor {
     attempt: Attempt,
     boundary: HarnessBoundary,
   ): Promise<void> {
-    pinSessionControls(context)
+    pinSessionControls(this.ctx, context)
     context.tools.restrict({ allow: [] })
     context.systemPrompt.suppressRuntimeContext()
     context.systemPrompt.section({ name: 'model-pk:complete', order: 0, text: MODEL_PK_SYSTEM_PROMPT, complete: true })
@@ -546,6 +551,33 @@ function normalizeExecutionError(error: unknown): ModelPkError {
   return modelPkError('PROVIDER_ERROR', 'execute', '模型执行失败', message, { retryable: true })
 }
 
+export function setPkSessionTitle(
+  ctx: Pick<DshHostContext, 'sessionTitle'>,
+  session: DshSession,
+  experimentName: string,
+  modelName: string,
+): void {
+  ctx.sessionTitle.rename(session, `PK · ${experimentName} · ${modelName}`)
+}
+
+export function setPkSessionPermission(
+  ctx: Pick<DshHostContext, 'permissionPresets'>,
+  session: DshSession,
+): void {
+  const preset = 'model-pk-workspace'
+  const spec = ctx.permissionPresets.resolve(preset)
+  if (spec.sandbox !== 'workspace-write' || spec.approval !== 'never') {
+    throw new Error(`Model PK permission preset drift: ${spec.sandbox}/${spec.approval}`)
+  }
+  session.append('permission/preset', { preset })
+  session.append('sandbox/mode', { mode: spec.sandbox })
+  session.append('approval/policy', { policy: spec.approval })
+}
+
+export async function releasePkSession(handle: DshAgentHandle, retainInSidebar: boolean): Promise<void> {
+  if (!retainInSidebar) await handle.dispose()
+}
+
 function isMatchingSession(value: unknown, sessionId: string): boolean {
   if (!isRecord(value)) return false
   if (value.id === sessionId) return true
@@ -567,14 +599,13 @@ function summarizeSessionEvents(events: readonly unknown[]): string {
   }).join(',')
 }
 
-function pinSessionControls(context: DshAgentContext): void {
+function pinSessionControls(ctx: Pick<DshHostContext, 'permissionPresets'>, context: DshAgentContext): void {
   const session = context.agent?.session
   if (session === undefined) throw harnessDrift('unpublished Agent context has no session')
   if (session.firstLiveSeq !== 0 || session.events.length !== 0) {
     throw harnessDrift(`session was not fresh before setup: firstLiveSeq=${session.firstLiveSeq}; events=${summarizeSessionEvents(session.events)}`)
   }
-  session.append('sandbox/mode', { mode: 'read-only' })
-  session.append('approval/policy', { policy: 'never' })
+  setPkSessionPermission(ctx, session)
 }
 
 function assertFreshSession(session: { readonly firstLiveSeq: number; readonly events: readonly unknown[] }): void {
@@ -582,7 +613,8 @@ function assertFreshSession(session: { readonly firstLiveSeq: number; readonly e
     throw new Error(`new session contains a replay seed: firstLiveSeq=${session.firstLiveSeq}`)
   }
   const expected = [
-    { type: 'sandbox/mode', data: { mode: 'read-only' } },
+    { type: 'permission/preset', data: { preset: 'model-pk-workspace' } },
+    { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
     { type: 'approval/policy', data: { policy: 'never' } },
   ]
   const actual = session.events.map((event) => {

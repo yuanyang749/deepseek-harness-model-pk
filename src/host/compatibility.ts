@@ -78,7 +78,7 @@ export class CompatibilityGate {
         : '原生 no-follow 拒绝 symlink 与 hardlink',
       () => this.proveNoFollow(),
     )
-    await check('isolation-sandbox', `${sandboxEngineName()} 允许 Attempt workspace 且拒绝兄弟读取、共享 temp、网络、秘密环境与孤儿进程`, () => this.proveSandbox())
+    await check('isolation-sandbox', `${sandboxEngineName()} 允许 Attempt workspace 与网络，且拒绝兄弟读取、共享 temp、秘密环境与孤儿进程`, () => this.proveSandbox())
     if (probes.modelSnapshot !== undefined) await check('model-snapshot', '模型与非敏感 Provider 配置可冻结并重新解析', probes.modelSnapshot)
     else {
       const error = modelPkError('MODEL_CONFIG_NOT_FOUND', 'compatibility:model-snapshot', '没有可用于冻结验证的受支持模型', 'model snapshot probe was not supplied')
@@ -232,7 +232,7 @@ export class CompatibilityGate {
           ? powershellTry(`$client = [Net.Sockets.TcpClient]::new(); $client.Connect('127.0.0.1', ${address.port}); $client.Dispose()`)
           : `/usr/bin/nc -z 127.0.0.1 ${address.port}`
         const networkAttempt = await this.sandbox.run(paths, networkCommand, { timeoutMs: 5_000 })
-        if (networkAttempt.exitCode === 0) throw new Error('sandbox reached loopback network')
+        if (networkAttempt.exitCode !== 0) throw new Error('sandbox could not reach loopback network')
       } finally {
         await new Promise<void>(resolvePromise => server.close(() => resolvePromise()))
       }

@@ -86,7 +86,7 @@ export function buildExperimentReport(experiment: ExperimentProjection, ranking:
       requestCount: tokenUsage?.requestCount ?? null,
       inputTokens: tokenUsage?.inputTokens ?? null,
       outputTokens: tokenUsage?.outputTokens ?? null,
-      cacheReadTokens: tokenUsage?.cacheReadTokens ?? null,
+      cacheReadTokens: reportableCacheReadTokens(tokenUsage),
       cacheWriteTokens: tokenUsage?.cacheWriteTokens ?? null,
       totalTokens: tokenUsage === null ? null : tokenUsage.inputTokens + tokenUsage.outputTokens,
       changedFileCount: attempt.workspaceSummary?.changedFileCount ?? null,
@@ -102,6 +102,12 @@ export function buildExperimentReport(experiment: ExperimentProjection, ranking:
     rows,
     rankingLabel: rows.map(row => row.modelName).join(' ＞ '),
   }
+}
+
+function reportableCacheReadTokens(tokenUsage: Attempt['tokenUsage']): number | null {
+  if (tokenUsage === null || tokenUsage.cacheReadTokens === null || tokenUsage.cacheReadTokensReported === false) return null
+  if (tokenUsage.cacheReadTokensReported === true) return tokenUsage.cacheReadTokens
+  return tokenUsage.cacheReadTokens > 0 ? tokenUsage.cacheReadTokens : null
 }
 
 export function formatReportDuration(milliseconds: number | null): string {

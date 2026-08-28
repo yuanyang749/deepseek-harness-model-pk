@@ -11,7 +11,7 @@ Model PK 是 DSH `0.1.1-rc.2` 的本地多模型公平对照插件。它以一�
 - Host 崩溃后的 STARTING、执行未知窗口、FINALIZING 和 Seal 收敛。
 - 插件专属 SQLite（`BEGIN IMMEDIATE`、`synchronous=FULL`、CAS、partial unique indexes）。
 - Rust 平台原生 no-follow 文件边界（macOS `openat/fstatat`、Windows handle/reparse 检查）、内容寻址快照、fencing token、物理预分配双缓冲控制 slot。
-- macOS deny-default Seatbelt 或 Windows AppContainer；private HOME/TEMP、无网络，并以进程组 / Job Object 收敛整棵子进程树。
+- macOS deny-default Seatbelt 或 Windows AppContainer；仅允许读写本次 Attempt workspace，使用独立 HOME/TEMP，允许出站联网，并以进程组 / Job Object 收敛整棵子进程树。
 - 自包含归档、不可变 Seal、Finder / Explorer 打开和 Durable Delete receipt。
 
 V1 不包含评分、排名、Judge、Elo、批量 Benchmark 或外部 Agent CLI。
@@ -24,7 +24,7 @@ V1 不包含评分、排名、Judge、Elo、批量 Benchmark 或外部 Agent CLI
 - macOS: arm64 / x64 原生可选包
 - Windows: arm64 / x64 原生可选包
 
-Windows 的运行数据根目录需位于支持 ACL 的本地卷；启动时的 Compatibility Gate 会实际验证 AppContainer 的 workspace 读写与越界拒绝，而不是仅按系统版本放行。
+Windows 的运行数据根目录需位于支持 ACL 的本地卷；启动时的 Compatibility Gate 会实际验证 AppContainer 的 workspace 读写、出站联网、越界拒绝与孤儿进程清理，而不是仅按系统版本放行。
 
 版本、Adapter、图片 wire path、session 新鲜度、隔离、归档和控制容量均由启动时 Compatibility Gate 动态证明；阻断项会保留 UI 查询能力并关闭 Start。
 

@@ -1,6 +1,8 @@
 import { chmod, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { once } from 'node:events'
+import { createServer } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { hashCanonical } from '../src/core/jcs.js'
 import { NativeHelper, nativeExecutableName } from '../src/native/helper.js'
@@ -22,6 +24,10 @@ afterAll(async () => {
 })
 
 describe('native helper', () => {
+  it('advertises the outbound-network sandbox capability', () => {
+    expect(helper.probe.version.features).toContain('sandbox-outbound-network')
+  })
+
   it('streams a deterministic snapshot and restores content/mode', async () => {
     const source = join(root, 'source')
     const objects = join(root, 'objects')
@@ -140,6 +146,26 @@ describe('native helper', () => {
       await runner.cleanup(paths)
     }
   }, process.platform === 'win32' ? 60_000 : 10_000)
+
+  it.runIf(process.platform === 'darwin')('allows outbound network without widening filesystem access', async () => {
+    const server = createServer((_request, response) => response.end('sandbox-network-ok'))
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('missing test server address')
+    const runner = new SandboxRunner(helper)
+    const paths = await createIsolationFixture(join(root, 'sandbox-network-attempt'))
+    await runner.prepare(paths)
+    try {
+      const result = await runner.run(paths, `/usr/bin/curl --fail --silent http://127.0.0.1:${address.port}/`, { timeoutMs: 5_000 })
+      expect(result, result.stderr).toMatchObject({ exitCode: 0 })
+      expect(result.stdout).toContain('sandbox-network-ok')
+    } finally {
+      await runner.cleanup(paths)
+      server.close()
+      await once(server, 'close')
+    }
+  }, 10_000)
 })
 
 function windowsOrphanCommand(target: string): string {

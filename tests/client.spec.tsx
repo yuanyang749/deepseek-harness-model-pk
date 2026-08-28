@@ -124,6 +124,7 @@ describe('formal product UI', () => {
     await controller.open()
     render(<ModelPkOverlay controller={controller} />)
     expect(screen.getByRole('dialog', { name: 'Model PK' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Model PK 双轨对决标志' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '保存目录并预检' })).toBeDisabled()
     expect(screen.queryByText('请先填写提示词。')).not.toBeInTheDocument()
     expect(screen.getByText('执行环境就绪')).toBeInTheDocument()
@@ -227,6 +228,7 @@ describe('formal product UI', () => {
       ])
     })
     expect(calls).not.toContain(RPC_ENDPOINTS.baselineSelect)
+    expect(await screen.findByRole('button', { name: '开始 PK' })).toBeEnabled()
   })
 
   it('shows a thumbnail after an image is uploaded', async () => {
@@ -541,6 +543,7 @@ describe('formal product UI', () => {
       requestCount: 2,
       inputTokens: 100,
       outputTokens: 20,
+      cacheReadTokens: 5,
       totalTokens: 120,
       changedFileCount: 1,
       attemptCount: 1,
@@ -558,6 +561,23 @@ describe('formal product UI', () => {
       outputTokens: null,
       totalTokens: null,
     })
+
+    const withLegacyAmbiguousZero = {
+      ...experiment,
+      runs: experiment.runs.map((run, index) => index === 0
+        ? {
+            ...run,
+            attempts: run.attempts.map(attempt => ({
+              ...attempt,
+              tokenUsage: attempt.tokenUsage === null ? null : { ...attempt.tokenUsage, cacheReadTokens: 0 },
+            })),
+          }
+        : run),
+    }
+    expect(buildExperimentReport(
+      withLegacyAmbiguousZero,
+      withLegacyAmbiguousZero.runs.map(run => run.runId),
+    ).rows.at(0)?.cacheReadTokens).toBeNull()
   })
 
   it('opens a desktop report from storage and saves the user-defined quality ranking', async () => {

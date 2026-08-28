@@ -59,11 +59,12 @@ export async function buildWorkspaceSummary(
 }
 
 export function summarizeTokenUsage(transcript: string): ModelTokenUsage | null {
-  const total: { requestCount: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } = {
+  const total: { requestCount: number; inputTokens: number; outputTokens: number; cacheReadTokens: number | null; cacheReadTokensReported: boolean; cacheWriteTokens: number } = {
     requestCount: 0,
     inputTokens: 0,
     outputTokens: 0,
-    cacheReadTokens: 0,
+    cacheReadTokens: null,
+    cacheReadTokensReported: false,
     cacheWriteTokens: 0,
   }
   for (const line of transcript.split('\n')) {
@@ -76,7 +77,11 @@ export function summarizeTokenUsage(transcript: string): ModelTokenUsage | null 
     total.requestCount += 1
     total.inputTokens += tokenCount(usage.inputTokens)
     total.outputTokens += tokenCount(usage.outputTokens)
-    total.cacheReadTokens += tokenCount(usage.cacheReadTokens)
+    const cacheReadTokens = reportedTokenCount(usage.cacheReadTokens)
+    if (cacheReadTokens !== null) {
+      total.cacheReadTokens = (total.cacheReadTokens ?? 0) + cacheReadTokens
+      total.cacheReadTokensReported = true
+    }
     total.cacheWriteTokens += tokenCount(usage.cacheWriteTokens)
   }
   return total.requestCount === 0 ? null : total
@@ -99,6 +104,10 @@ function sameFile(left: NativeTreeEntry, right: NativeTreeEntry): boolean {
 
 function tokenCount(value: unknown): number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+function reportedTokenCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

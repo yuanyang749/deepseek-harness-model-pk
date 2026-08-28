@@ -132,6 +132,7 @@ describe('self-contained archive', () => {
         inputTokens: 100 + run.ordinal,
         outputTokens: 20,
         cacheReadTokens: 5,
+        cacheReadTokensReported: true,
         cacheWriteTokens: 0,
       })
       expect(finalized.resultPath).toBe(join(

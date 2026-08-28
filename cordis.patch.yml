@@ -4,6 +4,24 @@
     agents: []
     maxParallelToolCalls: 1
 
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      model-pk-workspace:
+        sandbox: workspace-write
+        approval: never
+        name: Model PK 工作区
+        description: 仅访问本次实验工作区，允许联网且不弹出审批。
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
 - insert:
     - id: model-pk
       name: dsh-model-pk

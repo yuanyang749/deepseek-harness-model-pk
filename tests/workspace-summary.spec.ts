@@ -91,8 +91,29 @@ describe('adaptive workspace comparison', () => {
       inputTokens: 115,
       outputTokens: 25,
       cacheReadTokens: 40,
+      cacheReadTokensReported: true,
       cacheWriteTokens: 3,
     })
     expect(summarizeTokenUsage('{"type":"assistant/message"}\n')).toBeNull()
+  })
+
+  it('distinguishes an omitted cache-read metric from an explicit zero', () => {
+    const withoutCacheMetric = JSON.stringify({
+      type: 'assistant/chunk',
+      data: { chunk: { type: 'usage', usage: { inputTokens: 100, outputTokens: 20 } } },
+    })
+    const explicitCacheMiss = JSON.stringify({
+      type: 'assistant/chunk',
+      data: { chunk: { type: 'usage', usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0 } } },
+    })
+
+    expect(summarizeTokenUsage(withoutCacheMetric)).toMatchObject({
+      cacheReadTokens: null,
+      cacheReadTokensReported: false,
+    })
+    expect(summarizeTokenUsage(explicitCacheMiss)).toMatchObject({
+      cacheReadTokens: 0,
+      cacheReadTokensReported: true,
+    })
   })
 })

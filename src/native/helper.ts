@@ -216,7 +216,7 @@ export class NativeHelper {
   async runSandbox(
     paths: NativeSandboxPaths,
     commandText: string,
-    options: { readonly signal?: AbortSignal; readonly timeoutMs: number; readonly outputLimit: number },
+    options: { readonly signal?: AbortSignal; readonly timeoutMs: number; readonly outputLimit: number; readonly allowNetwork: boolean },
   ): Promise<NativeSandboxRunResult> {
     return this.call({
       command: 'sandbox-run',
@@ -227,6 +227,7 @@ export class NativeHelper {
       command_text: commandText,
       timeout_ms: options.timeoutMs,
       output_limit: options.outputLimit,
+      network_access: options.allowNetwork,
     }, {
       timeoutMs: options.timeoutMs + 15_000,
       ...(options.signal === undefined ? {} : { signal: options.signal }),

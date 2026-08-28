@@ -5,16 +5,16 @@ import type { SandboxRunner } from '../native/sandbox.js'
 
 export const MODEL_PK_SYSTEM_PROMPT = `You are running one frozen Model PK coding attempt.
 
-Work only inside the logical /workspace directory. Treat it as the complete task workspace. Do not inspect host paths, shared state, credentials, the network, other attempts, or prior sessions. The task prompt and ordered attachments are the only user inputs.
+Work only inside the logical /workspace directory. Treat it as the complete task workspace. Do not inspect host paths, shared state, credentials, other attempts, or prior sessions. The task prompt and ordered attachments are the only user inputs. You may use the network when it helps complete the task.
 
-Use only bash, read, write, edit, glob, and grep. Use workspace-relative paths and '/' separators for file-tool paths on every host. The bash tool runs the host shell (bash on macOS, PowerShell on Windows). Tool calls execute serially. Produce the best direct answer to the task, and make workspace changes when the task requires them. Do not ask for another agent, external CLI, web access, memory, skills, goals, plans, or hidden context.
+Use only bash, read, write, edit, glob, and grep. Use workspace-relative paths and '/' separators for file-tool paths on every host. The bash tool runs the host shell (bash on macOS, PowerShell on Windows) with outbound network access. Tool calls execute serially. Produce the best direct answer to the task, and make workspace changes when the task requires them. Do not ask for another agent, memory, skills, goals, plans, or hidden context.
 
 Your final response is the raw result for this attempt. Do not score, rank, compare against other models, or mention Model PK.`
 
 export const TOOL_CONTRACTS = Object.freeze([
   {
     name: 'bash',
-    description: 'Run one non-interactive host-shell command inside /workspace (bash on macOS, PowerShell on Windows). Network and paths outside this attempt are denied.',
+    description: 'Run one non-interactive host-shell command inside /workspace (bash on macOS, PowerShell on Windows). Outbound network is allowed; paths outside this attempt are denied.',
     parameters: objectSchema({ command: { type: 'string', minLength: 1 } }, ['command']),
     output: objectSchema({ exitCode: { type: 'integer', description: '-1 when the process ended by signal' }, stdout: { type: 'string' }, stderr: { type: 'string' }, timedOut: { type: 'boolean' }, truncated: { type: 'boolean' } }, ['exitCode', 'stdout', 'stderr', 'timedOut', 'truncated']),
   },
@@ -65,13 +65,13 @@ export function resolveHarness(sandbox: SandboxRunner): ResolvedHarness {
     toolNames: orderedTools.map(tool => tool.name),
     permissions: {
       filesystem: 'attempt-root-only',
-      network: 'denied',
+      network: 'allowed',
       environment: 'allowlist',
       sharedTemp: 'denied',
       subprocess: sandbox.subprocessPolicy(),
-      dshSessionSandboxMode: 'read-only',
+      dshSessionSandboxMode: 'workspace-write',
       dshSessionApprovalPolicy: 'never',
-      dshSessionPermissionPreset: 'custom',
+      dshSessionPermissionPreset: 'model-pk-workspace',
     },
     agentLoop: {
       implementation: '@deepseek-ai/dsh-agent-loop',

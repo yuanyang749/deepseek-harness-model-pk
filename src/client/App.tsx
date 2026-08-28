@@ -79,7 +79,15 @@ function Header(props: {
   ]
   return (
     <header className="mpk-header">
-      <div className="mpk-brand"><span className="mpk-brand-badge">PK</span><span>Model PK</span></div>
+      <div className="mpk-brand">
+        <svg className="mpk-brand-mark" viewBox="0 0 32 32" role="img" aria-label="Model PK 双轨对决标志" focusable="false">
+          <rect className="mpk-brand-frame" x="1" y="1" width="30" height="30" rx="9" />
+          <path className="mpk-brand-rail" d="M13 8H9.5A2.5 2.5 0 0 0 7 10.5v11A2.5 2.5 0 0 0 9.5 24H13M11 12l4 4-4 4" />
+          <path className="mpk-brand-rail" d="M19 8h3.5a2.5 2.5 0 0 1 2.5 2.5v11a2.5 2.5 0 0 1-2.5 2.5H19M21 12l-4 4 4 4" />
+          <rect className="mpk-brand-axis" x="15.25" y="7" width="1.5" height="18" rx=".75" />
+        </svg>
+        <span className="mpk-brand-name">Model PK</span>
+      </div>
       <nav className="mpk-nav" aria-label="Model PK 页面">
         {tabs.map(([screen, label]) => (
           <button key={screen} type="button" aria-current={props.screen === screen ? 'page' : undefined}
@@ -550,7 +558,7 @@ function PreflightPage({ snapshot, controller }: { snapshot: UiSnapshot; control
         <div className="mpk-card mpk-actions">
           <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => controller.show('create')}>返回修改</button>
           <span className="mpk-space" />
-          <button className="mpk-btn" type="button" disabled={snapshot.busy || preflight.status === 'BLOCKED' || needsImageConfirm} onClick={() => { void controller.startExperiment() }}>{snapshot.busy ? '正在持久化…' : '开始对照'}</button>
+          <button className="mpk-btn" type="button" disabled={snapshot.busy || preflight.status === 'BLOCKED' || needsImageConfirm} onClick={() => { void controller.startExperiment() }}>{snapshot.busy ? '正在持久化…' : '开始 PK'}</button>
         </div>
       </div>
     </section>
@@ -704,7 +712,7 @@ function AttemptMetrics({ attempt }: { attempt: Attempt }): JSX.Element | null {
     <div className="mpk-result-metrics">
       {duration === null ? null : <span>耗时 {duration}</span>}
       {tokenUsage === null ? <span>Token 暂无统计</span> : <span>{tokenUsage.inputTokens} 输入 · {tokenUsage.outputTokens} 输出</span>}
-      {tokenUsage !== null && tokenUsage.cacheReadTokens > 0 ? <span>缓存读取 {tokenUsage.cacheReadTokens}</span> : null}
+      {tokenUsage !== null && (tokenUsage.cacheReadTokens ?? 0) > 0 ? <span>缓存读取 {tokenUsage.cacheReadTokens}</span> : null}
     </div>
   )
 }

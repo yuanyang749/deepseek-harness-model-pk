@@ -184,7 +184,7 @@ fn run() -> Result<Value> {
             "protocolVersion": 1,
             "platform": platform_name(),
             "arch": architecture_name(),
-            "features": ["openat", "nofollow", "tree-snapshot", "capacity-slot", "f-preallocate"]
+            "features": ["openat", "nofollow", "tree-snapshot", "capacity-slot", "f-preallocate", "sandbox-outbound-network"]
         })),
         Request::Reserve { path, byte_length } => reserve(&path, byte_length),
         Request::Scan { root, max_bytes, max_files } => {

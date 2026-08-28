@@ -108,6 +108,17 @@ export interface DshAgentHandle {
   dispose(): Promise<void>
 }
 
+export interface DshSessionTitleService {
+  rename(session: DshSession, title: string): unknown
+}
+
+export interface DshPermissionPresetService {
+  resolve(name: string): {
+    readonly sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
+    readonly approval: 'ask' | 'never'
+  }
+}
+
 export interface DshHostContext {
   readonly connection: {
     readonly rpc: {
@@ -140,6 +151,8 @@ export interface DshHostContext {
     saveImages?(inputs: readonly { readonly data: Uint8Array; readonly mediaType: string; readonly name?: string }[]): Promise<readonly unknown[]>
     readImage?(reference: unknown): Promise<{ readonly ref: unknown; readonly data: Uint8Array }>
   }
+  readonly sessionTitle: DshSessionTitleService
+  readonly permissionPresets: DshPermissionPresetService
   readonly agents: {
     create(options: {
       readonly sessionId: string

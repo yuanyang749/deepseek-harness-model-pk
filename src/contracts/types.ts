@@ -288,7 +288,8 @@ export interface ModelTokenUsage {
   readonly requestCount: number
   readonly inputTokens: number
   readonly outputTokens: number
-  readonly cacheReadTokens: number
+  readonly cacheReadTokens: number | null
+  readonly cacheReadTokensReported?: boolean
   readonly cacheWriteTokens: number
 }
 
