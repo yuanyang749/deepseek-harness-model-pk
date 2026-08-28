@@ -51,8 +51,12 @@ export class ModelPkUiController {
   private pollAbort: AbortController | null = null
   private booted = false
   private readonly previews = new Map<string, string>()
+  private closeSettingsPanel: (() => void) | null = null
 
-  constructor(private readonly api: ModelPkApi) {}
+  constructor(
+    private readonly api: ModelPkApi,
+    private readonly navigateToSession?: (sessionId: string) => Promise<void> | void,
+  ) {}
 
   previewUrl(hash: string): string | null {
     return this.previews.get(hash) ?? null
@@ -62,6 +66,13 @@ export class ModelPkUiController {
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  bindSettingsPanelClose(close: () => void): () => void {
+    this.closeSettingsPanel = close
+    return () => {
+      if (this.closeSettingsPanel === close) this.closeSettingsPanel = null
+    }
   }
 
   async open(): Promise<void> {
@@ -350,6 +361,15 @@ export class ModelPkUiController {
       experimentId: experiment.experimentId,
       attemptId,
     }))
+  }
+
+  async openDshSession(sessionId: string): Promise<void> {
+    await this.run('正在打开 DeepSeek 会话…', async () => {
+      if (this.navigateToSession === undefined) throw new Error('DSH 会话导航服务不可用')
+      this.closeSettingsPanel?.()
+      await this.navigateToSession(sessionId)
+      this.close()
+    })
   }
 
   async exportWorkspace(attemptId: string): Promise<void> {

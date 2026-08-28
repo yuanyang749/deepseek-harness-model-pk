@@ -12,6 +12,10 @@ export type DshApiResponse<T> = {
 }
 
 export interface ModelPkClientContext {
+  readonly sessions: {
+    refresh(): Promise<void>
+    open(sessionId: string): void
+  }
   readonly connection: {
     readonly api: {
       readonly settings: {

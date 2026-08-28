@@ -8,6 +8,7 @@ Model PK 是 DSH `0.1.1-rc.2` 的本地多模型公平对照插件。它以一�
 - 单个 ACTIVE Experiment；实验内持久 FIFO 调度，默认并发 `min(4, N)`。
 - 文本、最多 10 张原始图片、最多 5 GiB / 200,000 文件的完整 Baseline 快照。
 - `Stop`、`Stop All`、`Retry`、`Run Again`、原子 `Retry Failed`。
+- 执行会话按 `PK · 实验名 · 模型名` 保留；实验页可按模型与 Attempt 返回 DeepSeek 会话查看完整执行过程。
 - Host 崩溃后的 STARTING、执行未知窗口、FINALIZING 和 Seal 收敛。
 - 插件专属 SQLite（`BEGIN IMMEDIATE`、`synchronous=FULL`、CAS、partial unique indexes）。
 - Rust 平台原生 no-follow 文件边界（macOS `openat/fstatat`、Windows handle/reparse 检查）、内容寻址快照、fencing token、物理预分配双缓冲控制 slot。

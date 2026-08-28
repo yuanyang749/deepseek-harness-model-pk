@@ -14,10 +14,14 @@ import {
 } from './report.js'
 import { MODEL_PK_CSS } from './styles.js'
 
-export function ModelPkSettingsSection({ controller }: { controller: ModelPkUiController }): JSX.Element {
+export function ModelPkSettingsSection({ controller, close }: { controller: ModelPkUiController; close?: (() => void) | undefined }): JSX.Element {
   useEffect(() => {
     void controller.open()
   }, [controller])
+  useEffect(() => {
+    if (close === undefined) return undefined
+    return controller.bindSettingsPanelClose(close)
+  }, [close, controller])
   return (
     <section className="mpk-launch-card" aria-label="Model PK 入口">
       <style>{MODEL_PK_CSS}</style>
@@ -572,8 +576,15 @@ function PreflightSummary({ value }: { value: PreflightSnapshot }): JSX.Element 
 function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; controller: ModelPkUiController }): JSX.Element {
   const experiment = snapshot.experiment
   const [compare, setCompare] = useState<string[]>([])
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false)
   if (experiment === null) return <Loading label="尚未打开 Experiment" />
   const allAttempts = experiment.runs.flatMap(run => run.attempts.map(attempt => ({ run, attempt })))
+  const sessionTargets = experiment.runs.flatMap(run => [...run.attempts].reverse().flatMap(attempt => attempt.dshSessionId === null ? [] : [{
+    sessionId: attempt.dshSessionId,
+    modelName: run.modelConfig.modelName,
+    attemptNo: attempt.attemptNo,
+    state: attempt.state,
+  }]))
   const hasRetryableFailure = experiment.runs.some(run => {
     const latest = run.attempts.find(attempt => attempt.attemptId === run.latestAttemptId)
     return latest !== undefined && (
@@ -595,6 +606,31 @@ function ExperimentPage({ snapshot, controller }: { snapshot: UiSnapshot; contro
         </div>
         <div className="mpk-actions">
           <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.openFolder(experiment.experimentId) }}>打开结果文件夹</button>
+          {sessionTargets.length > 0 ? (
+            <div className="mpk-session-picker">
+              <button className="mpk-btn mpk-btn-secondary mpk-session-trigger" type="button" aria-haspopup="menu" aria-expanded={sessionMenuOpen} onClick={() => setSessionMenuOpen(open => !open)}>
+                查看执行会话 <span aria-hidden="true">↗</span>
+              </button>
+              {sessionMenuOpen ? (
+                <div className="mpk-session-menu" role="menu" aria-label="DeepSeek 执行会话">
+                  <div className="mpk-session-menu-head"><span>DEEPSEEK HARNESS</span><strong>选择执行会话</strong></div>
+                  <div className="mpk-session-menu-list">{sessionTargets.map(target => {
+                    const label = `${target.modelName} · 第 ${target.attemptNo} 次 · ${attemptStateLabel(target.state)}`
+                    return (
+                      <button key={target.sessionId} type="button" role="menuitem" aria-label={label} onClick={() => {
+                        setSessionMenuOpen(false)
+                        void controller.openDshSession(target.sessionId)
+                      }}>
+                        <span className={`mpk-session-dot ${stateClass(target.state)}`} aria-hidden="true" />
+                        <span className="mpk-session-menu-copy"><strong>{target.modelName}</strong><span>Attempt {target.attemptNo} · {attemptStateLabel(target.state)}</span></span>
+                        <span className="mpk-session-arrow" aria-hidden="true">→</span>
+                      </button>
+                    )
+                  })}</div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {experiment.lifecycleState === 'ACTIVE' ? <button className="mpk-btn mpk-btn-danger" type="button" onClick={() => { if (confirm('停止当前实验的全部可取消执行？')) void controller.stopAll() }}>全部停止</button> : null}
           {hasRetryableFailure ? <button className="mpk-btn mpk-btn-secondary" type="button" onClick={() => { void controller.retryFailed() }}>重试失败项</button> : null}
         </div>

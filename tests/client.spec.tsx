@@ -15,6 +15,7 @@ import { fixtureCapability, fixtureDraft, fixtureModel, fixturePreflight } from 
 
 function context(models: readonly ModelListItem[] = []): ModelPkClientContext {
   return {
+    sessions: { refresh: async () => undefined, open: () => undefined },
     connection: {
       api: {
         settings: {
@@ -83,6 +84,7 @@ function adaptiveComparisonExperiment(): ExperimentProjection {
       finalizationStage: 'CONTROL_COMMITTED' as const,
       executionTerminationConfirmed: true,
       executionReservationState: 'RELEASED' as const,
+      dshSessionId: `00000000-0000-4000-8000-00000000007${ordinal}`,
       workspaceSealState: 'SEALED' as const,
       workspacePath: '/workspace',
       artifactPath: '/artifacts',
@@ -493,6 +495,45 @@ describe('formal product UI', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '加入 Model 1 第 1 次执行对照' }))
     expect(screen.getByRole('heading', { name: /文本结果双栏对照/u })).toBeInTheDocument()
     controller.close()
+  })
+
+  it('opens a selected PK attempt in the DeepSeek conversation interface', async () => {
+    const experiment = adaptiveComparisonExperiment()
+    localStorage.setItem('dsh-model-pk:last-experiment-id', experiment.experimentId)
+    const clientContext = context()
+    clientContext.connection.rpc.call = async (_channel, endpoint, _payload, signal) => {
+      let value: unknown
+      if (endpoint === RPC_ENDPOINTS.capabilitiesGet) value = fixtureCapability()
+      else if (endpoint === RPC_ENDPOINTS.modelsList) value = []
+      else if (endpoint === RPC_ENDPOINTS.draftCreate) value = fixtureDraft()
+      else if (endpoint === RPC_ENDPOINTS.experimentGet) value = experiment
+      else if (endpoint === RPC_ENDPOINTS.experimentPoll) {
+        return new Promise(resolve => signal?.addEventListener('abort', () => {
+          resolve({ ok: false, error: { code: 'ABORTED', message: 'aborted' } })
+        }, { once: true }))
+      } else value = fixtureDraft()
+      return { ok: true, value: { ok: true, value } }
+    }
+    const actions: string[] = []
+    const openSession = vi.fn(async (_sessionId: string) => { actions.push('open-session') })
+    const closeSettings = vi.fn(() => { actions.push('close-settings') })
+    const controller = new ModelPkUiController(new ModelPkApi(clientContext), openSession)
+    await controller.open()
+    render(
+      <>
+        <ModelPkSettingsSection controller={controller} close={closeSettings} />
+        <ModelPkOverlay controller={controller} />
+      </>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '查看执行会话' }))
+    expect(screen.getByRole('menu', { name: 'DeepSeek 执行会话' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: /Model 1 · 第 1 次 · 成功/u }))
+
+    await waitFor(() => expect(openSession).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000070'))
+    expect(closeSettings).toHaveBeenCalledOnce()
+    expect(actions).toEqual(['close-settings', 'open-session'])
+    expect(screen.queryByRole('dialog', { name: 'Model PK' })).not.toBeInTheDocument()
   })
 
   it('keeps legacy attempts readable when adaptive summary fields are absent', async () => {
