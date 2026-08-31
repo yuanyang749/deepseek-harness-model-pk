@@ -36,7 +36,10 @@ describe('compatibility gate', () => {
       sessionFreshness: async () => undefined,
     })
 
-    expect(evidence.report.executionEnabled).toBe(true)
+    expect(
+      evidence.report.executionEnabled,
+      JSON.stringify({ checks: evidence.checks, report: evidence.report }, null, 2),
+    ).toBe(true)
     expect(evidence.checks.find(check => check.id === 'isolation-sandbox')).toMatchObject({ status: 'PASS' })
   }, process.platform === 'win32' ? 60_000 : 15_000)
 })
