@@ -1077,10 +1077,11 @@ fn launch_appcontainer_power_shell(
         .join("WindowsPowerShell")
         .join("v1.0")
         .join("powershell.exe");
+    let bootstrap = encoded_power_shell_bootstrap(script_path);
     let command_line = format!(
-        "{} -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {}",
+        "{} -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
         quote_windows_argument(&powershell.as_os_str().to_string_lossy()),
-        quote_windows_argument(&script_path.as_os_str().to_string_lossy())
+        bootstrap,
     );
     let env = environment_block(&[
         ("SystemRoot", Path::new(&system_root)),
@@ -2123,6 +2124,22 @@ fn environment_block(entries: &[(&str, &Path)]) -> Vec<u16> {
 
 fn powershell_literal(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
+}
+
+fn encoded_power_shell_bootstrap(script_path: &Path) -> String {
+    // AppContainer PowerShell sessions may start without filesystem PSDrives,
+    // so -File can stall before the script is opened. The .NET file API uses
+    // the already-granted directory ACL directly and does not depend on a
+    // PowerShell drive being mounted.
+    let command = format!(
+        "$script=[IO.File]::ReadAllText({},[Text.Encoding]::UTF8);&([ScriptBlock]::Create($script))",
+        powershell_literal(script_path),
+    );
+    let bytes = command
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    BASE64.encode(bytes)
 }
 
 fn quote_windows_argument(value: &str) -> String {
