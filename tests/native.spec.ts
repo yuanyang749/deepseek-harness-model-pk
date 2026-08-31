@@ -149,7 +149,7 @@ describe('native helper', () => {
       const orphanResult = await runner.run(paths, orphanCommand, { timeoutMs: probeTimeoutMs })
       assertSandboxProbeCompleted('orphan-process', orphanResult, probeTimeoutMs)
       if (process.platform === 'win32') {
-        expect(orphanResult.exitCode).toBe(0)
+        expect(orphanResult, orphanResult.stderr).toMatchObject({ exitCode: 0 })
         expect(orphanResult.stdout).toContain('spawned:')
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 1200))
@@ -181,7 +181,7 @@ describe('native helper', () => {
 })
 
 function windowsOrphanCommand(target: string): string {
-  const childScript = `Start-Sleep -Seconds 1; [IO.File]::WriteAllText('${target.replaceAll("'", "''")}', 'leaked')`
+  const childScript = `[Threading.Thread]::Sleep(1000); [IO.File]::WriteAllText('${target.replaceAll("'", "''")}', 'leaked')`
   const encoded = Buffer.from(childScript, 'utf16le').toString('base64')
-  return `$ErrorActionPreference = 'Stop'; $shell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $child = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', '${encoded}') -PassThru; Write-Output "spawned:$($child.Id)"`
+  return `$ErrorActionPreference = 'Stop'; $shell = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'); $start = [Diagnostics.ProcessStartInfo]::new(); $start.FileName = $shell; $start.Arguments = '-NoLogo -NoProfile -NonInteractive -EncodedCommand ${encoded}'; $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $child = [Diagnostics.Process]::Start($start); "spawned:$($child.Id)"`
 }

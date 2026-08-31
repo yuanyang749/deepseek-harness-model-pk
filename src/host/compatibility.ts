@@ -216,7 +216,7 @@ export class CompatibilityGate {
       assertSandboxProbeCompleted('shared-temp-denial', tempAttempt, probeTimeoutMs)
       if (tempAttempt.exitCode === 0) throw new Error('sandbox wrote shared temp')
       const envCommand = process.platform === 'win32'
-        ? 'Get-ChildItem Env: | ForEach-Object { "$($_.Name)=$($_.Value)" }'
+        ? '$environment = [Environment]::GetEnvironmentVariables(); foreach ($key in $environment.Keys) { "$key=$($environment[$key])" }'
         : '/usr/bin/env'
       const previousSecret = process.env.MODEL_PK_COMPAT_SECRET
       process.env.MODEL_PK_COMPAT_SECRET = secret
@@ -228,6 +228,7 @@ export class CompatibilityGate {
         else process.env.MODEL_PK_COMPAT_SECRET = previousSecret
       }
       assertSandboxProbeCompleted('secret-environment-denial', envAttempt, probeTimeoutMs)
+      if (envAttempt.exitCode !== 0) throw new Error(`sandbox could not inspect its environment: ${envAttempt.stderr}`)
       if (envAttempt.stdout.includes('MODEL_PK_COMPAT_SECRET')) throw new Error('sandbox inherited secret environment')
 
       const server = createServer(socket => socket.end())
@@ -286,9 +287,9 @@ function powershellTry(body: string): string {
 }
 
 function windowsOrphanCommand(target: string): string {
-  const childScript = `Start-Sleep -Seconds 1; [IO.File]::WriteAllText(${powershellQuote(target)}, 'leaked')`
+  const childScript = `[Threading.Thread]::Sleep(1000); [IO.File]::WriteAllText(${powershellQuote(target)}, 'leaked')`
   const encoded = Buffer.from(childScript, 'utf16le').toString('base64')
-  return `$ErrorActionPreference = 'Stop'; $shell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $child = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', '${encoded}') -PassThru; Write-Output "spawned:$($child.Id)"`
+  return `$ErrorActionPreference = 'Stop'; $shell = [IO.Path]::Combine($env:SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'); $start = [Diagnostics.ProcessStartInfo]::new(); $start.FileName = $shell; $start.Arguments = '-NoLogo -NoProfile -NonInteractive -EncodedCommand ${encoded}'; $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $child = [Diagnostics.Process]::Start($start); "spawned:$($child.Id)"`
 }
 
 function sandboxEngineName(): string {
