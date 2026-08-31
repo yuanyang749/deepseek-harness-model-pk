@@ -231,22 +231,32 @@ export class CompatibilityGate {
       if (envAttempt.exitCode !== 0) throw new Error(`sandbox could not inspect its environment: ${envAttempt.stderr}`)
       if (envAttempt.stdout.includes('MODEL_PK_COMPAT_SECRET')) throw new Error('sandbox inherited secret environment')
 
-      const server = createServer(socket => socket.end())
-      await new Promise<void>((resolvePromise, rejectPromise) => {
-        server.once('error', rejectPromise)
-        server.listen(0, '127.0.0.1', () => resolvePromise())
-      })
-      try {
-        const address = server.address()
-        if (address === null || typeof address === 'string') throw new Error('network probe address unavailable')
-        const networkCommand = process.platform === 'win32'
-          ? powershellTry(`$client = [Net.Sockets.TcpClient]::new(); $client.Connect('127.0.0.1', ${address.port}); $client.Dispose()`)
-          : `/usr/bin/nc -z 127.0.0.1 ${address.port}`
+      if (process.platform === 'win32') {
+        // AppContainer intentionally treats localhost separately from public
+        // outbound traffic. Prove the internetClient capability against a
+        // public endpoint instead of requiring a machine-wide loopback exemption.
+        const networkCommand = powershellTry("$client = [Net.Sockets.TcpClient]::new(); try { $task = $client.ConnectAsync('1.1.1.1', 443); if (-not $task.Wait(5000) -or -not $client.Connected) { exit 2 } } finally { $client.Dispose() }")
         const networkAttempt = await this.sandbox.run(paths, networkCommand, { timeoutMs: probeTimeoutMs })
-        assertSandboxProbeCompleted('loopback-network', networkAttempt, probeTimeoutMs)
-        if (networkAttempt.exitCode !== 0) throw new Error('sandbox could not reach loopback network')
-      } finally {
-        await new Promise<void>(resolvePromise => server.close(() => resolvePromise()))
+        assertSandboxProbeCompleted('outbound-network', networkAttempt, probeTimeoutMs)
+        if (networkAttempt.exitCode !== 0) {
+          throw new Error(`sandbox could not reach the public network: ${networkAttempt.stderr}`)
+        }
+      } else {
+        const server = createServer(socket => socket.end())
+        await new Promise<void>((resolvePromise, rejectPromise) => {
+          server.once('error', rejectPromise)
+          server.listen(0, '127.0.0.1', () => resolvePromise())
+        })
+        try {
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('network probe address unavailable')
+          const networkCommand = `/usr/bin/nc -z 127.0.0.1 ${address.port}`
+          const networkAttempt = await this.sandbox.run(paths, networkCommand, { timeoutMs: probeTimeoutMs })
+          assertSandboxProbeCompleted('loopback-network', networkAttempt, probeTimeoutMs)
+          if (networkAttempt.exitCode !== 0) throw new Error('sandbox could not reach loopback network')
+        } finally {
+          await new Promise<void>(resolvePromise => server.close(() => resolvePromise()))
+        }
       }
 
       const orphanTarget = join(paths.workspace, 'orphan-leak')
