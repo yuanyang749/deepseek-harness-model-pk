@@ -6,7 +6,12 @@ import { createServer } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { hashCanonical } from '../src/core/jcs.js'
 import { NativeHelper, nativeExecutableName } from '../src/native/helper.js'
-import { createIsolationFixture, SandboxRunner } from '../src/native/sandbox.js'
+import {
+  assertSandboxProbeCompleted,
+  createIsolationFixture,
+  sandboxProbeTimeoutMs,
+  SandboxRunner,
+} from '../src/native/sandbox.js'
 
 let helper: NativeHelper
 let root: string
@@ -111,6 +116,7 @@ describe('native helper', () => {
     const attemptRoot = join(root, 'sandbox-attempt')
     const paths = await createIsolationFixture(attemptRoot)
     const sibling = join(root, 'sandbox-secret')
+    const probeTimeoutMs = sandboxProbeTimeoutMs(process.platform)
     await writeFile(sibling, 'not-visible')
     await runner.prepare(paths)
     try {
@@ -118,24 +124,30 @@ describe('native helper', () => {
       const allowedCommand = process.platform === 'win32'
         ? `$ErrorActionPreference = 'Stop'; [IO.File]::WriteAllText('${allowed.replaceAll("'", "''")}', 'allowed')`
         : `/bin/echo allowed > '${allowed.replaceAll("'", "'\\''")}'`
-      expect((await runner.run(paths, allowedCommand, { timeoutMs: 5_000 })).exitCode).toBe(0)
+      const allowedResult = await runner.run(paths, allowedCommand, { timeoutMs: probeTimeoutMs })
+      assertSandboxProbeCompleted('workspace-write', allowedResult, probeTimeoutMs)
+      expect(allowedResult.exitCode).toBe(0)
       expect(await readFile(allowed, 'utf8')).toContain('allowed')
       const logicalCommand = process.platform === 'win32'
         ? "$ErrorActionPreference = 'Stop'; [IO.File]::WriteAllText('/workspace/logical.txt', 'logical')"
         : "/bin/echo logical > '/workspace/logical.txt'"
-      expect((await runner.run(paths, logicalCommand, { timeoutMs: 5_000 })).exitCode).toBe(0)
+      const logicalResult = await runner.run(paths, logicalCommand, { timeoutMs: probeTimeoutMs })
+      assertSandboxProbeCompleted('logical-workspace-write', logicalResult, probeTimeoutMs)
+      expect(logicalResult.exitCode).toBe(0)
       expect(await readFile(join(paths.workspace, 'logical.txt'), 'utf8')).toContain('logical')
       const readCommand = process.platform === 'win32'
         ? `$ErrorActionPreference = 'Stop'; try { [Console]::Out.Write([IO.File]::ReadAllText('${sibling.replaceAll("'", "''")}')); exit 0 } catch { exit 1 }`
         : `/bin/cat '${sibling.replaceAll("'", "'\\''")}'`
-      const result = await runner.run(paths, readCommand, { timeoutMs: 5_000 })
+      const result = await runner.run(paths, readCommand, { timeoutMs: probeTimeoutMs })
+      assertSandboxProbeCompleted('sibling-read-denial', result, probeTimeoutMs)
       expect(result.exitCode).not.toBe(0)
       expect(result.stdout).not.toContain('not-visible')
       const orphan = join(paths.workspace, 'orphan.txt')
       const orphanCommand = process.platform === 'win32'
         ? windowsOrphanCommand(orphan)
         : `(/bin/sleep 1; /bin/echo leaked > '${orphan.replaceAll("'", "'\\''")}') & exit 0`
-      const orphanResult = await runner.run(paths, orphanCommand, { timeoutMs: 5_000 })
+      const orphanResult = await runner.run(paths, orphanCommand, { timeoutMs: probeTimeoutMs })
+      assertSandboxProbeCompleted('orphan-process', orphanResult, probeTimeoutMs)
       if (process.platform === 'win32') {
         expect(orphanResult.exitCode).toBe(0)
         expect(orphanResult.stdout).toContain('spawned:')
@@ -145,7 +157,7 @@ describe('native helper', () => {
     } finally {
       await runner.cleanup(paths)
     }
-  }, process.platform === 'win32' ? 60_000 : 10_000)
+  }, process.platform === 'win32' ? 150_000 : 10_000)
 
   it.runIf(process.platform === 'darwin')('allows outbound network without widening filesystem access', async () => {
     const server = createServer((_request, response) => response.end('sandbox-network-ok'))

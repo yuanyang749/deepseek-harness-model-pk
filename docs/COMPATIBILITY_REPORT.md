@@ -37,6 +37,12 @@ pnpm check
 
 It runs strict TypeScript checking, Vitest suites and both Host/Client production builds. Native tests use the compiled Rust binary and include deterministic snapshot/materialization, JCS tree identity, traversal rejection, fencing, capacity generations and the current platform's sandbox isolation. CI runs the same gate on macOS 15 arm64/x64, Windows Server 2025 x64 and Windows 11 arm64; Windows Rust code is additionally cross-checked with `cargo check --target x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc` during development.
 
+Windows AppContainer compatibility probes allow up to 30 seconds for each
+PowerShell process to account for cold startup on hosted runners; macOS probes
+retain the 5-second budget. A timeout remains a blocking isolation failure and
+reports the exact probe stage and captured output instead of an ambiguous null
+exit code.
+
 ## Release matrix still enforced dynamically
 
 - Each release runner builds and hashes its own `darwin-arm64`, `darwin-x64`, `win32-arm64` or `win32-x64` optional package.

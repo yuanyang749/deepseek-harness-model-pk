@@ -6,7 +6,12 @@ import { DSH_COMMIT, DSH_VERSION, LIMITS, PLUGIN_VERSION } from '../contracts/co
 import type { CapabilityReport, ModelPkError } from '../contracts/types.js'
 import { modelPkError, normalizeError } from '../core/error.js'
 import type { NativeHelper } from '../native/helper.js'
-import { createIsolationFixture, type SandboxRunner } from '../native/sandbox.js'
+import {
+  assertSandboxProbeCompleted,
+  createIsolationFixture,
+  sandboxProbeTimeoutMs,
+  type SandboxRunner,
+} from '../native/sandbox.js'
 import type { DataLayout } from './archive.js'
 
 export interface HostRuntimeIdentity {
@@ -184,6 +189,7 @@ export class CompatibilityGate {
     const sibling = join(root, 'sibling-secret')
     const sharedTemp = join(tmpdir(), `model-pk-${process.pid}-${Date.now()}`)
     const secret = `secret-${Date.now()}`
+    const probeTimeoutMs = sandboxProbeTimeoutMs(process.platform)
     await writeFile(sibling, secret, { mode: 0o600 })
     try {
       await this.sandbox.prepare(paths)
@@ -191,7 +197,8 @@ export class CompatibilityGate {
       const allowedCommand = process.platform === 'win32'
         ? powershellTry(`[IO.File]::WriteAllText(${powershellQuote(allowedTarget)}, 'allowed')`)
         : `/bin/echo allowed > ${shellQuote(allowedTarget)}`
-      const allowedAttempt = await this.sandbox.run(paths, allowedCommand, { timeoutMs: 5_000 })
+      const allowedAttempt = await this.sandbox.run(paths, allowedCommand, { timeoutMs: probeTimeoutMs })
+      assertSandboxProbeCompleted('workspace-write', allowedAttempt, probeTimeoutMs)
       const allowedContent = await readFile(allowedTarget, 'utf8').catch(() => '')
       if (allowedAttempt.exitCode !== 0 || allowedContent.trim() !== 'allowed') {
         throw new Error('sandbox could not write its workspace')
@@ -199,25 +206,28 @@ export class CompatibilityGate {
       const readCommand = process.platform === 'win32'
         ? powershellTry(`[Console]::Out.Write([IO.File]::ReadAllText(${powershellQuote(sibling)}))`)
         : `/bin/cat ${shellQuote(sibling)}`
-      const readAttempt = await this.sandbox.run(paths, readCommand, { timeoutMs: 5_000 })
+      const readAttempt = await this.sandbox.run(paths, readCommand, { timeoutMs: probeTimeoutMs })
+      assertSandboxProbeCompleted('sibling-read-denial', readAttempt, probeTimeoutMs)
       if (readAttempt.exitCode === 0 || readAttempt.stdout.includes(secret)) throw new Error('sandbox read sibling file')
       const tempCommand = process.platform === 'win32'
         ? powershellTry(`[IO.File]::WriteAllText(${powershellQuote(sharedTemp)}, 'leak')`)
         : `/usr/bin/touch ${shellQuote(sharedTemp)}`
-      const tempAttempt = await this.sandbox.run(paths, tempCommand, { timeoutMs: 5_000 })
+      const tempAttempt = await this.sandbox.run(paths, tempCommand, { timeoutMs: probeTimeoutMs })
+      assertSandboxProbeCompleted('shared-temp-denial', tempAttempt, probeTimeoutMs)
       if (tempAttempt.exitCode === 0) throw new Error('sandbox wrote shared temp')
       const envCommand = process.platform === 'win32'
         ? 'Get-ChildItem Env: | ForEach-Object { "$($_.Name)=$($_.Value)" }'
         : '/usr/bin/env'
       const previousSecret = process.env.MODEL_PK_COMPAT_SECRET
       process.env.MODEL_PK_COMPAT_SECRET = secret
-      let envAttempt: { readonly stdout: string }
+      let envAttempt: Awaited<ReturnType<SandboxRunner['run']>>
       try {
-        envAttempt = await this.sandbox.run(paths, envCommand, { timeoutMs: 5_000 })
+        envAttempt = await this.sandbox.run(paths, envCommand, { timeoutMs: probeTimeoutMs })
       } finally {
         if (previousSecret === undefined) delete process.env.MODEL_PK_COMPAT_SECRET
         else process.env.MODEL_PK_COMPAT_SECRET = previousSecret
       }
+      assertSandboxProbeCompleted('secret-environment-denial', envAttempt, probeTimeoutMs)
       if (envAttempt.stdout.includes('MODEL_PK_COMPAT_SECRET')) throw new Error('sandbox inherited secret environment')
 
       const server = createServer(socket => socket.end())
@@ -231,7 +241,8 @@ export class CompatibilityGate {
         const networkCommand = process.platform === 'win32'
           ? powershellTry(`$client = [Net.Sockets.TcpClient]::new(); $client.Connect('127.0.0.1', ${address.port}); $client.Dispose()`)
           : `/usr/bin/nc -z 127.0.0.1 ${address.port}`
-        const networkAttempt = await this.sandbox.run(paths, networkCommand, { timeoutMs: 5_000 })
+        const networkAttempt = await this.sandbox.run(paths, networkCommand, { timeoutMs: probeTimeoutMs })
+        assertSandboxProbeCompleted('loopback-network', networkAttempt, probeTimeoutMs)
         if (networkAttempt.exitCode !== 0) throw new Error('sandbox could not reach loopback network')
       } finally {
         await new Promise<void>(resolvePromise => server.close(() => resolvePromise()))
@@ -241,7 +252,9 @@ export class CompatibilityGate {
       const orphanCommand = process.platform === 'win32'
         ? windowsOrphanCommand(orphanTarget)
         : `(/bin/sleep 1; /bin/echo leaked > ${shellQuote(orphanTarget)}) & exit 0`
-      const orphanAttempt = await this.sandbox.run(paths, orphanCommand, { timeoutMs: 4_000 })
+      const orphanTimeoutMs = process.platform === 'win32' ? probeTimeoutMs : 4_000
+      const orphanAttempt = await this.sandbox.run(paths, orphanCommand, { timeoutMs: orphanTimeoutMs })
+      assertSandboxProbeCompleted('orphan-process', orphanAttempt, orphanTimeoutMs)
       if (process.platform === 'win32' && (orphanAttempt.exitCode !== 0
         || !orphanAttempt.stdout.includes('spawned:'))) {
         throw new Error('sandbox could not launch the orphan-process probe')

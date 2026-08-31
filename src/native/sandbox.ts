@@ -23,6 +23,29 @@ export interface SandboxRunResult {
 }
 
 const OUTPUT_LIMIT = 2 * 1024 * 1024
+const DEFAULT_SANDBOX_PROBE_TIMEOUT_MS = 5_000
+const WINDOWS_SANDBOX_PROBE_TIMEOUT_MS = 30_000
+
+export function sandboxProbeTimeoutMs(platform: NodeJS.Platform): number {
+  return platform === 'win32'
+    ? WINDOWS_SANDBOX_PROBE_TIMEOUT_MS
+    : DEFAULT_SANDBOX_PROBE_TIMEOUT_MS
+}
+
+export function assertSandboxProbeCompleted(
+  stage: string,
+  result: SandboxRunResult,
+  timeoutMs: number,
+): void {
+  if (!result.timedOut) return
+  const stdout = result.stdout.trim()
+  const stderr = result.stderr.trim()
+  const diagnostics = [
+    stdout.length === 0 ? null : `stdout=${JSON.stringify(stdout)}`,
+    stderr.length === 0 ? null : `stderr=${JSON.stringify(stderr)}`,
+  ].filter((value): value is string => value !== null).join('; ')
+  throw new Error(`sandbox probe ${stage} timed out after ${timeoutMs}ms${diagnostics.length === 0 ? '' : `; ${diagnostics}`}`)
+}
 
 export class SandboxRunner {
   readonly executable = '/usr/bin/sandbox-exec'
