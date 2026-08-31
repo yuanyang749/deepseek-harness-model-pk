@@ -41,7 +41,9 @@ Windows AppContainer compatibility probes allow up to 30 seconds for each
 PowerShell process to account for cold startup on hosted runners; macOS probes
 retain the 5-second budget. A timeout remains a blocking isolation failure and
 reports the exact probe stage and captured output instead of an ambiguous null
-exit code.
+exit code. Windows writable Attempt directories receive both the profile SID
+DACL and an inherited Low Integrity label so AppContainer writes remain visible
+in the sealed workspace instead of being denied or virtualized.
 
 ## Release matrix still enforced dynamically
 

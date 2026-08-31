@@ -878,6 +878,7 @@ fn sandbox_prepare(attempt_root: &Path, writable_roots: &[String]) -> Result<Val
             FILE_MODIFY_ACCESS_INHERITED,
             true,
         )?;
+        set_low_integrity(writable)?;
     }
     Ok(json!({
         "engine": "windows-appcontainer",
@@ -1445,6 +1446,40 @@ fn revoke_acl(path: &Path, sid: &str) -> Result<()> {
         return Err(Failure {
             code: "SANDBOX_ACL_REVOKE_FAILED",
             message: format!("icacls exited {:?} for {}", status.code(), path.display()),
+        });
+    }
+    Ok(())
+}
+
+fn set_low_integrity(path: &Path) -> Result<()> {
+    let system_root = std::env::var_os("SystemRoot").ok_or_else(|| Failure {
+        code: "SANDBOX_ENVIRONMENT_INVALID",
+        message: "SystemRoot is unavailable".to_owned(),
+    })?;
+    let executable = PathBuf::from(system_root)
+        .join("System32")
+        .join("icacls.exe");
+    let status = Command::new(executable)
+        .arg(path)
+        .arg("/setintegritylevel")
+        .arg("(OI)(CI)L")
+        .arg("/T")
+        .arg("/C")
+        .arg("/Q")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|error| failure("SANDBOX_INTEGRITY_LAUNCH_FAILED", error))?;
+    if !status.success() {
+        return Err(Failure {
+            code: "SANDBOX_INTEGRITY_LABEL_FAILED",
+            message: format!(
+                "icacls integrity label exited {:?} for {}",
+                status.code(),
+                path.display()
+            ),
         });
     }
     Ok(())
