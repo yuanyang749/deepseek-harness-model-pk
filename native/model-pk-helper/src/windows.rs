@@ -1035,15 +1035,21 @@ fn write_power_shell_script(
 ) -> Result<()> {
     let encoded_user_command = BASE64.encode(command_text.as_bytes());
     let wrapper = format!(
-        "$ErrorActionPreference='Continue';$ProgressPreference='SilentlyContinue';\
+        "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';\
          [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$OutputEncoding=[Console]::OutputEncoding;\
          $command=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{}'));\
-         $exitCode=0;try{{& ([ScriptBlock]::Create($command)) 1> {} 2> {};\
-         if($null -ne $LASTEXITCODE){{$exitCode=[int]$LASTEXITCODE}}elseif(-not $?){{$exitCode=1}}}}\
-         catch{{$_|Out-String|Out-File -LiteralPath {} -Encoding utf8 -Append;$exitCode=1}};exit $exitCode",
+         $stdout=[Text.StringBuilder]::new();$stderr=[Text.StringBuilder]::new();$exitCode=0;\
+         try{{$items=@(& ([ScriptBlock]::Create($command)) 2>&1);$succeeded=$?;$nativeExit=$LASTEXITCODE;\
+         foreach($item in $items){{if($item -is [Management.Automation.ErrorRecord])\
+         {{[void]$stderr.AppendLine([string]$item)}}else{{[void]$stdout.AppendLine([string]$item)}}}};\
+         if($null -ne $nativeExit){{$exitCode=[int]$nativeExit}}elseif(-not $succeeded){{$exitCode=1}}}}\
+         catch{{$exitCode=1;[void]$stderr.AppendLine($_.Exception.ToString())}};\
+         try{{[IO.File]::WriteAllText({},$stdout.ToString(),[Text.UTF8Encoding]::new($false))}}\
+         catch{{$exitCode=1;[void]$stderr.AppendLine($_.Exception.ToString())}};\
+         try{{[IO.File]::WriteAllText({},$stderr.ToString(),[Text.UTF8Encoding]::new($false))}}catch{{}};\
+         exit $exitCode",
         encoded_user_command,
         powershell_literal(stdout_path),
-        powershell_literal(stderr_path),
         powershell_literal(stderr_path),
     );
     let mut file = OpenOptions::new()
