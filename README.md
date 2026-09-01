@@ -9,13 +9,14 @@ Model PK 是 DSH `0.1.1-rc.2` 的本地多模型公平对照插件。它以一�
 - 文本、最多 10 张原始图片、最多 5 GiB / 200,000 文件的完整 Baseline 快照。
 - `Stop`、`Stop All`、`Retry`、`Run Again`、原子 `Retry Failed`。
 - 执行会话按 `PK · 实验名 · 模型名` 保留；实验页可按模型与 Attempt 返回 DeepSeek 会话查看完整执行过程。
+- 实验报告汇总状态、耗时、首次响应、请求数、输入/输出/缓存 Token、产物与重试次数；用户可拖拽设置人工质量顺序，并导出带实验名称和时间的 PNG 报告。
 - Host 崩溃后的 STARTING、执行未知窗口、FINALIZING 和 Seal 收敛。
 - 插件专属 SQLite（`BEGIN IMMEDIATE`、`synchronous=FULL`、CAS、partial unique indexes）。
 - Rust 平台原生 no-follow 文件边界（macOS `openat/fstatat`、Windows handle/reparse 检查）、内容寻址快照、fencing token、物理预分配双缓冲控制 slot。
 - macOS deny-default Seatbelt 或 Windows AppContainer；仅允许读写本次 Attempt workspace，使用独立 HOME/TEMP，允许出站联网，并以进程组 / Job Object 收敛整棵子进程树。
 - 自包含归档、不可变 Seal、Finder / Explorer 打开和 Durable Delete receipt。
 
-V1 不包含评分、排名、Judge、Elo、批量 Benchmark 或外部 Agent CLI。
+V1 不包含自动评分、自动质量排名、Judge、Elo、跨实验排行榜、批量 Benchmark 或外部 Agent CLI。实验报告中的质量顺序完全由用户人工评定，仅保存在本机，不会自动选择“最佳模型”或改变实验结果。
 
 ## 固定版本
 
@@ -42,7 +43,16 @@ pnpm check
 
 完整自动化检查同时覆盖 macOS 与 Windows：TypeScript strict typecheck、领域/SQLite/RPC/UI 测试、Rust helper 真实文件系统测试，以及 Seatbelt 或 AppContainer/Job Object hostile-orphan 隔离测试。Windows 开发机需要 Rust MSVC toolchain；`pnpm build:native` 会自动产出当前系统/架构的可选包。
 
-## 安装到 DSH Web Profile
+## 从 npm 安装到 DSH Web Profile
+
+```bash
+dsh plugin --profile web add dsh-model-pk
+dsh --profile web
+```
+
+包管理器会根据当前系统自动安装对应的 `@yuanyang749/model-pk-native-*` 原生包。当前支持 macOS arm64 / x64 和 Windows arm64 / x64。
+
+本地开发版本可使用：
 
 ```bash
 pnpm dsh:bootstrap -- --profile web
@@ -96,3 +106,7 @@ macOS 使用目录 `0700`、文件 `0600`；Windows 使用用户 ACL 与 Attempt
 - 原生 helper：`native/model-pk-helper/src/{unix,windows}.rs`
 - 正式 UI：`src/client/App.tsx`
 - 兼容与发布证据：`docs/COMPATIBILITY_REPORT.md`
+
+## 许可证
+
+[MIT](LICENSE)

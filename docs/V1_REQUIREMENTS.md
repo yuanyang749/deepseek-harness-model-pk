@@ -90,6 +90,7 @@ V1 必须满足：
 8. 每次重跑创建新的 Attempt，使用相同 Task Package 和全新干净 workspace。
 9. 完整归档 Experiment manifest、Prompt、附件、metadata、transcript、日志和独立产物。
 10. 一键打开准确的实验总目录。
+11. 为单次实验汇总状态、耗时、首次响应、请求数、Token、产物与重试信息，允许用户人工调整模型质量顺序并导出 PNG 实验报告。
 
 ### 3.2 V1 核心成功定义
 
@@ -100,7 +101,7 @@ V1 发布时，以下产品承诺必须成立：
 ### 3.3 V1 明确不做
 
 - 自动 Judge。
-- 自动评分、质量结论或胜负排名。
+- 自动评分、自动质量结论或自动胜负排名。
 - Elo。
 - 历史排行榜或跨实验榜单。
 - Codex CLI。
@@ -115,6 +116,7 @@ V1 发布时，以下产品承诺必须成立：
 - 云端同步、团队协作或公开分享平台。
 
 本地持久化、崩溃恢复和重新打开当前实验属于可靠性要求，不属于“历史排行榜”。
+单次实验内由用户手动调整的质量顺序属于人工记录，不是自动 Judge、自动评分或跨实验排行榜，也不得反向改变 Run / Attempt 状态。
 
 ---
 
@@ -834,7 +836,7 @@ FINALIZING
 - Run 有非终态 Attempt 时，展示该 Attempt 的状态。
 - 否则展示最新 Attempt 的终态。
 - 历史成功不被删除；若成功后的 Run Again 失败，Run 最新状态显示失败，同时保留 lastSuccessfulAttemptId。
-- UI 不自动选择“最佳 Attempt”，因为 V1 不做 Judge。
+- UI 不自动选择“最佳 Attempt”，因为 V1 不做 Judge。实验报告允许用户手动排列各模型的质量顺序，但该顺序仅表达用户评价，不参与状态推导或调度。
 
 ### 11.4 创建页状态、Experiment 生命周期与结果
 
@@ -1445,7 +1447,7 @@ deepseek-harness-model-pk/
 
 **Given** 完成的 V1 UI、接口、配置和数据结构<br>
 **When** 做发布审查<br>
-**Then** 不存在自动 Judge、自动评分、Elo、排行榜、Codex CLI、Claude Code CLI、Agent Router、Prompt 模板库或批量 Benchmark 执行路径。
+**Then** 不存在自动 Judge、自动评分、Elo、跨实验排行榜、Codex CLI、Claude Code CLI、Agent Router、Prompt 模板库或批量 Benchmark 执行路径；单次实验报告可以保存用户人工质量顺序，但不得自动生成质量结论或选择获胜模型。
 
 ### AC-035：固定 DSH Harness
 
@@ -1558,10 +1560,10 @@ V2 可以在不引入自动裁判的前提下扩展：
 - 本地实验历史浏览、搜索、标签与重新打开。
 - 实验 Clone and Edit。
 - Prompt 或 Task Package 模板。
-- 人工备注、人工胜负选择、盲评模式。
+- 人工备注、盲评模式与按维度评价。
 - 更强的并排查看、文本或文件 diff。
 - 导出、导入和脱敏分享包。
-- Token、成本、延迟与稳定性元数据可视化。
+- 跨实验聚合的 Token、成本、延迟与稳定性可视化。
 - 多次人工触发采样与 Attempt 对照。
 - 受控的公共参数实验与 Strict / Native 公平模式。
 
@@ -1648,9 +1650,10 @@ Codex CLI、Claude Code CLI、其他 Agent Runtime 和 Agent Router 不应被当
 - 完整 transcript、logs、metadata 和 artifacts。
 - 页面重连和宿主恢复。
 - 一键打开目录。
+- 单次实验指标报告、人工质量顺序与 PNG 导出。
 - 脱敏、权限、错误映射、容量与端到端测试。
 
-任何阶段都不应提前加入 Judge、评分、排行榜或 CLI Agent。
+任何阶段都不应提前加入自动 Judge、自动评分、跨实验排行榜或 CLI Agent。
 
 ---
 
@@ -1704,6 +1707,6 @@ Codex CLI、Claude Code CLI、其他 Agent Runtime 和 Agent Router 不应被当
 
 V1 的产品价值不依赖自动评分。第一版只需要把下面这件事做到稳定且可信：
 
-> 一次输入同一 Task Package，选择 N 个 DSH 模型，在固定 Harness 与隔离 workspace 中并行执行；全过程可观察，异常单路可重跑，任何 Attempt 都不覆盖，所有证据与产物均可追溯。
+> 一次输入同一 Task Package，选择 N 个 DSH 模型，在固定 Harness 与隔离 workspace 中并行执行；全过程可观察，异常单路可重跑，任何 Attempt 都不覆盖，所有证据与产物均可追溯；用户可以在单次实验报告中记录人工质量顺序并导出结果，但系统不自动裁判。
 
 达到该目标后即冻结 V1。所有自动评判、排行榜、批量 Benchmark 和外部 Agent 调度均作为独立后续工作处理。

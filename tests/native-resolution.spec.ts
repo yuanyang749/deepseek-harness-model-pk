@@ -3,10 +3,10 @@ import { nativeExecutableName, nativePackageName } from '../src/native/helper.js
 
 describe('native package resolution', () => {
   it('maps supported macOS and Windows hosts to architecture packages', () => {
-    expect(nativePackageName('darwin', 'arm64')).toBe('@model-pk/native-darwin-arm64')
-    expect(nativePackageName('darwin', 'x64')).toBe('@model-pk/native-darwin-x64')
-    expect(nativePackageName('win32', 'arm64')).toBe('@model-pk/native-win32-arm64')
-    expect(nativePackageName('win32', 'x64')).toBe('@model-pk/native-win32-x64')
+    expect(nativePackageName('darwin', 'arm64')).toBe('@yuanyang749/model-pk-native-darwin-arm64')
+    expect(nativePackageName('darwin', 'x64')).toBe('@yuanyang749/model-pk-native-darwin-x64')
+    expect(nativePackageName('win32', 'arm64')).toBe('@yuanyang749/model-pk-native-win32-arm64')
+    expect(nativePackageName('win32', 'x64')).toBe('@yuanyang749/model-pk-native-win32-x64')
     expect(nativePackageName('linux', 'x64')).toBeNull()
     expect(nativePackageName('win32', 'ia32')).toBeNull()
   })

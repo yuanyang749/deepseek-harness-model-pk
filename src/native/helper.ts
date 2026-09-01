@@ -312,8 +312,8 @@ export class NativeHelper {
 
 export function nativePackageName(platform: NodeJS.Platform, arch: string): string | null {
   if (!['arm64', 'x64'].includes(arch)) return null
-  if (platform === 'darwin') return `@model-pk/native-darwin-${arch}`
-  if (platform === 'win32') return `@model-pk/native-win32-${arch}`
+  if (platform === 'darwin') return `@yuanyang749/model-pk-native-darwin-${arch}`
+  if (platform === 'win32') return `@yuanyang749/model-pk-native-win32-${arch}`
   return null
 }
 

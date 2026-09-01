@@ -3,6 +3,25 @@
   "version": "0.1.0",
   "description": "A local, fairness-frozen multi-model comparison harness for DSH.",
   "license": "MIT",
+  "author": "yuanyang749",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuanyang749/deepseek-harness-model-pk.git"
+  },
+  "homepage": "https://github.com/yuanyang749/deepseek-harness-model-pk#readme",
+  "bugs": {
+    "url": "https://github.com/yuanyang749/deepseek-harness-model-pk/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "model-comparison",
+    "llm-evaluation",
+    "multi-model"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -24,7 +43,10 @@
     "lib",
     "cordis.patch.yml",
     "docs/COMPATIBILITY_REPORT.md",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "scripts": {
     "build": "pnpm build:host && pnpm build:client",
@@ -49,10 +71,10 @@
     }
   },
   "optionalDependencies": {
-    "@model-pk/native-darwin-arm64": "workspace:*",
-    "@model-pk/native-darwin-x64": "workspace:*",
-    "@model-pk/native-win32-arm64": "workspace:*",
-    "@model-pk/native-win32-x64": "workspace:*"
+    "@yuanyang749/model-pk-native-darwin-arm64": "workspace:*",
+    "@yuanyang749/model-pk-native-darwin-x64": "workspace:*",
+    "@yuanyang749/model-pk-native-win32-arm64": "workspace:*",
+    "@yuanyang749/model-pk-native-win32-x64": "workspace:*"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

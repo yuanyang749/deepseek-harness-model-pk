@@ -1,11 +1,15 @@
 {
-  "name": "@model-pk/native-darwin-x64",
+  "name": "@yuanyang749/model-pk-native-darwin-x64",
   "version": "0.1.0",
   "description": "Model PK native helper for macOS x64",
   "license": "MIT",
+  "author": "yuanyang749",
+  "repository": { "type": "git", "url": "https://github.com/yuanyang749/deepseek-harness-model-pk.git" },
+  "homepage": "https://github.com/yuanyang749/deepseek-harness-model-pk#readme",
+  "bugs": { "url": "https://github.com/yuanyang749/deepseek-harness-model-pk/issues" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "os": ["darwin"],
   "cpu": ["x64"],
-  "files": ["bin", "manifest.json"],
+  "files": ["bin", "manifest.json", "LICENSE"],
   "type": "module"
 }
-

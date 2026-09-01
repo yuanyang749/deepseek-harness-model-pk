@@ -1,0 +1,46 @@
+name: release-artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: windows-2025
+            platform: win32
+            arch: x64
+          - runner: windows-11-arm
+            platform: win32
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:native
+      - run: pnpm --dir packages/native-${{ matrix.platform }}-${{ matrix.arch }} pack --pack-destination ../../dist/packages
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/packages/*.tgz
+          if-no-files-found: error
+          retention-days: 7
