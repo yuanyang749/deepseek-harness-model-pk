@@ -46,7 +46,7 @@ pnpm check
 ## 从 npm 安装到 DSH Web Profile
 
 ```bash
-dsh plugin --profile web add dsh-model-pk
+dsh plugin --profile web add @yuanyang749/dsh-model-pk
 dsh --profile web
 ```
 

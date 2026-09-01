@@ -23,14 +23,14 @@ describe('release metadata', () => {
 
     const root = await json('package.json')
     expect(root).toMatchObject({
-      name: 'dsh-model-pk',
+      name: '@yuanyang749/dsh-model-pk',
       version: '0.1.0',
       license: 'MIT',
       author: 'yuanyang749',
       repository: { type: 'git', url: repository },
       homepage: 'https://github.com/yuanyang749/deepseek-harness-model-pk#readme',
       bugs: { url: 'https://github.com/yuanyang749/deepseek-harness-model-pk/issues' },
-      publishConfig: { registry },
+      publishConfig: { access: 'public', registry },
     })
     expect(root.keywords).toEqual(expect.arrayContaining(['deepseek-harness', 'dsh-plugin', 'model-comparison']))
   })

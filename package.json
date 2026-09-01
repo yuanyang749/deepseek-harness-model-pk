@@ -1,5 +1,5 @@
 {
-  "name": "dsh-model-pk",
+  "name": "@yuanyang749/dsh-model-pk",
   "version": "0.1.0",
   "description": "A local, fairness-frozen multi-model comparison harness for DSH.",
   "license": "MIT",
@@ -20,6 +20,7 @@
     "multi-model"
   ],
   "publishConfig": {
+    "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "type": "module",
