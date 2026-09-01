@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "target": "aarch64-pc-windows-msvc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "sha256": "UNBUILT"
 }

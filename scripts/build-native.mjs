@@ -27,7 +27,7 @@ const probe = JSON.parse(execFileSync(destination, [], {
   encoding: 'utf8',
   windowsHide: true,
 }))
-if (probe?.ok !== true || probe.value?.version !== '0.1.0'
+if (probe?.ok !== true || probe.value?.version !== '0.1.1'
   || probe.value?.platform !== platform || probe.value?.arch !== arch) {
   throw new Error(`native helper identity mismatch for ${platform}/${arch}`)
 }
@@ -39,7 +39,7 @@ const target = platform === 'darwin'
 await writeFile(join(packageRoot, 'manifest.json'), `${JSON.stringify({
   schemaVersion: 1,
   target,
-  version: '0.1.0',
+  version: '0.1.1',
   sha256,
 }, null, 2)}\n`)
 console.log(`built ${destination} (${sha256})`)

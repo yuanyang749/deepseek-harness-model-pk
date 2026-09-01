@@ -6,7 +6,7 @@
 |---|---|
 | DSH package | `0.1.1-rc.2` |
 | DSH commit | `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e` |
-| Plugin | `@yuanyang749/dsh-model-pk@0.1.0` |
+| Plugin | `@yuanyang749/dsh-model-pk@0.1.1` |
 | Node | `^22.19 || >=24` |
 | Host OS | macOS arm64 / x64; Windows arm64 / x64 |
 

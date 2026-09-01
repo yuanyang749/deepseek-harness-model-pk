@@ -1,6 +1,6 @@
 {
   "name": "@yuanyang749/dsh-model-pk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A local, fairness-frozen multi-model comparison harness for DSH.",
   "license": "MIT",
   "author": "yuanyang749",

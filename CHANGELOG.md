@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.1 - 2026-09-01
+
+- Preserve native helper execute permissions in npm installs by declaring platform package binaries.
+
 ## 0.1.0 - 2026-09-01
 
 - Initial public release for DeepSeek Harness 0.1.1-rc.2.
