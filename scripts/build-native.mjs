@@ -5,18 +5,20 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
+const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
 const arch = process.arch
 const platform = process.platform
 if (!['darwin', 'win32'].includes(platform) || !['arm64', 'x64'].includes(arch)) {
   throw new Error(`native release packages support macOS/Windows arm64/x64, got ${platform}/${arch}`)
 }
-execFileSync('cargo', ['build', '--locked', '--release', '--manifest-path', join(root, 'native', 'model-pk-helper', 'Cargo.toml')], {
+const targetDir = join(root, 'native', 'model-pk-helper', 'target')
+execFileSync('cargo', ['build', '--locked', '--release', '--manifest-path', join(root, 'native', 'model-pk-helper', 'Cargo.toml'), '--target-dir', targetDir], {
   cwd: root,
   stdio: 'inherit',
 })
 const executable = platform === 'win32' ? 'model-pk-helper.exe' : 'model-pk-helper'
 const packagePlatform = platform === 'win32' ? 'win32' : 'darwin'
-const source = join(root, 'native', 'model-pk-helper', 'target', 'release', executable)
+const source = join(targetDir, 'release', executable)
 const packageRoot = join(root, `packages/native-${packagePlatform}-${arch}`)
 const destination = join(packageRoot, 'bin', executable)
 await mkdir(dirname(destination), { recursive: true })
@@ -27,7 +29,7 @@ const probe = JSON.parse(execFileSync(destination, [], {
   encoding: 'utf8',
   windowsHide: true,
 }))
-if (probe?.ok !== true || probe.value?.version !== '0.1.1'
+if (probe?.ok !== true || probe.value?.version !== manifest.version
   || probe.value?.platform !== platform || probe.value?.arch !== arch) {
   throw new Error(`native helper identity mismatch for ${platform}/${arch}`)
 }
@@ -39,7 +41,7 @@ const target = platform === 'darwin'
 await writeFile(join(packageRoot, 'manifest.json'), `${JSON.stringify({
   schemaVersion: 1,
   target,
-  version: '0.1.1',
+  version: manifest.version,
   sha256,
 }, null, 2)}\n`)
 console.log(`built ${destination} (${sha256})`)

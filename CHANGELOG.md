@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.2 - 2026-09-01
+
+- Fix Cordis patch plugin bundle name registration to match package scope `@yuanyang749/dsh-model-pk`.
+- Redesign creation form footer action layout to place "Clear and refil" beside primary button.
+
 ## 0.1.1 - 2026-09-01
 
 - Preserve native helper execute permissions in npm installs by declaring platform package binaries.

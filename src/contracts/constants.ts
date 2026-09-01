@@ -1,5 +1,5 @@
 export const PLUGIN_ID = 'dsh-model-pk'
-export const PLUGIN_VERSION = '0.1.1'
+export const PLUGIN_VERSION = '0.1.2'
 export const SCHEMA_VERSION = 'model-pk/v1'
 export const DSH_VERSION = '0.1.1-rc.2'
 export const DSH_COMMIT = 'b150a551b8d465e31e418e1b2eaf5e79bbb7d28e'

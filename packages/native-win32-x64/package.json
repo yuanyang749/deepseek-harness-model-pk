@@ -1,16 +1,34 @@
 {
   "name": "@yuanyang749/model-pk-native-win32-x64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Model PK native helper for Windows x64",
   "license": "MIT",
   "author": "yuanyang749",
-  "repository": { "type": "git", "url": "https://github.com/yuanyang749/deepseek-harness-model-pk.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuanyang749/deepseek-harness-model-pk.git"
+  },
   "homepage": "https://github.com/yuanyang749/deepseek-harness-model-pk#readme",
-  "bugs": { "url": "https://github.com/yuanyang749/deepseek-harness-model-pk/issues" },
-  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
-  "os": ["win32"],
-  "cpu": ["x64"],
-  "bin": { "model-pk-helper": "bin/model-pk-helper.exe" },
-  "files": ["bin", "manifest.json", "LICENSE"],
+  "bugs": {
+    "url": "https://github.com/yuanyang749/deepseek-harness-model-pk/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "bin": {
+    "model-pk-helper": "bin/model-pk-helper.exe"
+  },
+  "files": [
+    "bin",
+    "manifest.json",
+    "LICENSE"
+  ],
   "type": "module"
 }

@@ -1,6 +1,6 @@
 {
   "name": "@yuanyang749/dsh-model-pk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A local, fairness-frozen multi-model comparison harness for DSH.",
   "license": "MIT",
   "author": "yuanyang749",
@@ -50,6 +50,7 @@
     "SECURITY.md"
   ],
   "scripts": {
+    "bump": "node scripts/bump-version.mjs",
     "build": "pnpm build:host && pnpm build:client",
     "build:host": "tsc -p tsconfig.build.json",
     "build:client": "tsc -p tsconfig.client.json --emitDeclarationOnly && tsdown src/client/index.tsx --format cjs --platform browser --target es2022 --tsconfig tsconfig.client.json --external react --external react/jsx-runtime --external react-dom --external react-dom/client --out-dir .client-build --clean --sourcemap --logLevel warn --no-dts && node scripts/build-client.mjs",
