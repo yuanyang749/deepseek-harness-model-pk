@@ -50,7 +50,7 @@ dsh plugin --profile web add @yuanyang749/dsh-model-pk
 dsh --profile web
 ```
 
-包管理器会根据当前系统自动安装对应的 `@yuanyang749/model-pk-native-*` 原生包。当前支持 macOS arm64 / x64 和 Windows arm64 / x64。四个平台包由 GitHub Actions 在对应 runner 上构建；推送 `v*` tag 会自动发布到 npm。
+包管理器会根据当前系统自动安装对应的 `@yuanyang749/model-pk-native-*` 原生包。当前支持 macOS arm64 / x64 和 Windows arm64 / x64。四个平台包由 `release` workflow 在对应 runner 上构建；推送 `v*` tag 会发布到 npm 并创建 GitHub Release。
 
 本地开发版本可使用：
 

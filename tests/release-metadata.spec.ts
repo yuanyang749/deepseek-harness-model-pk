@@ -58,8 +58,8 @@ describe('release metadata', () => {
     expect(optionalDependencies).toEqual(expectedDependencies)
   })
 
-  it('defines a four-runner artifact workflow for native release packages', async () => {
-    const workflow = await readFile('.github/workflows/release-artifacts.yml', 'utf8')
+  it('defines a four-runner release workflow for native packages and npm publish', async () => {
+    const workflow = await readFile('.github/workflows/release.yml', 'utf8')
     for (const runner of ['macos-15', 'macos-15-intel', 'windows-2025', 'windows-11-arm']) {
       expect(workflow).toContain(runner)
     }
@@ -68,5 +68,6 @@ describe('release metadata', () => {
     expect(workflow).toContain("tags:")
     expect(workflow).toContain('npm publish')
     expect(workflow).toContain('pnpm publish --access public --no-git-checks')
+    expect(workflow).toContain('gh release create')
   })
 })

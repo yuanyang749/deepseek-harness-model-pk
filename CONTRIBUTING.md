@@ -27,8 +27,8 @@ macOS arm64, macOS x64, Windows x64, and Windows arm64.
 ## Release
 
 Do not publish native packages from a single developer machine. Push a version
-tag and let GitHub Actions build all four platform packages, then publish them
-and the main package to npm.
+tag and let the `release` workflow build all four platform packages, publish
+them with the main package to npm, and create a GitHub Release.
 
 ```bash
 pnpm bump patch
@@ -39,5 +39,6 @@ git tag v0.1.3
 git push origin main --tags
 ```
 
-The `release-artifacts` workflow also still accepts a manual `workflow_dispatch`.
-It needs repository secret `NPM_TOKEN` with publish access to `@yuanyang749/*`.
+Manual `workflow_dispatch` on `release` only uploads artifacts unless the
+`publish` input is enabled. The publish job needs repository secret `NPM_TOKEN`
+with publish access to `@yuanyang749/*`.
