@@ -1,6 +1,8 @@
 # Model PK for DeepSeek Harness
 
-Model PK 是 DSH `0.1.1-rc.2` 的本地多模型公平对照插件。它以一个冻结的 Task Package 和 Harness 同时运行 2–10 个模型，并持久化完整的 `Experiment → Run → Attempt` 生命周期、实时输出、重跑、恢复、归档和删除操作。
+Model PK 用来在 DeepSeek Harness 里做模型同题 PK：选 2 到 10 个已配置模型，只准备一次题目、图片和起始文件，各模型按同一套规则分开跑。过程可以同屏看，某一路挂了能单独重跑，结果互不覆盖。
+
+当前锁定 DSH `0.1.1-rc.2`。V1 不做自动打分、自动排名或跨实验排行榜；谁更好由你自己看完再排。
 
 ## V1 功能
 

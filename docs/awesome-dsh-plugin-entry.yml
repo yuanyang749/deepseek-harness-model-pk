@@ -1,0 +1,6 @@
+url: https://github.com/yuanyang749/deepseek-harness-model-pk
+name: yuanyang749/deepseek-harness-model-pk
+category: model
+description:
+  en: PK 2-10 models on the same prompt, files, and tools, then compare their outputs side by side.
+  zh: 让 2 到 10 个模型用同一份题目、同一组文件和同一套工具同台 PK，再并排对照结果。

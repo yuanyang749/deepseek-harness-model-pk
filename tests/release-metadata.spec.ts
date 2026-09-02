@@ -20,6 +20,12 @@ describe('release metadata', () => {
     await expect(readFile('CHANGELOG.md', 'utf8')).resolves.toContain('0.1.2')
     await expect(readFile('SECURITY.md', 'utf8')).resolves.toContain('Security')
     await expect(readFile('CONTRIBUTING.md', 'utf8')).resolves.toContain('Contributing')
+    expect(JSON.parse(await readFile('screenshots.json', 'utf8'))).toEqual([
+      'assets/screenshots/01-create.png',
+      'assets/screenshots/02-preflight.png',
+      'assets/screenshots/03-experiment.png',
+      'assets/screenshots/04-report.png',
+    ])
 
     const root = await json('package.json')
     expect(root).toMatchObject({
@@ -32,7 +38,8 @@ describe('release metadata', () => {
       bugs: { url: 'https://github.com/yuanyang749/deepseek-harness-model-pk/issues' },
       publishConfig: { access: 'public', registry },
     })
-    expect(root.keywords).toEqual(expect.arrayContaining(['deepseek-harness', 'dsh-plugin', 'model-comparison']))
+    expect(root.keywords).toEqual(expect.arrayContaining(['deepseek-harness', 'dsh-plugin', 'model-pk', 'model-comparison']))
+    expect(root.description).toContain('PK 2-10 models')
   })
 
   it('publishes four platform packages from the yuanyang749 scope', async () => {

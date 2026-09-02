@@ -1,7 +1,7 @@
 {
   "name": "@yuanyang749/dsh-model-pk",
   "version": "0.1.2",
-  "description": "A local, fairness-frozen multi-model comparison harness for DSH.",
+  "description": "PK 2-10 models on the same prompt, files, and tools in DeepSeek Harness.",
   "license": "MIT",
   "author": "yuanyang749",
   "repository": {
@@ -15,6 +15,7 @@
   "keywords": [
     "deepseek-harness",
     "dsh-plugin",
+    "model-pk",
     "model-comparison",
     "llm-evaluation",
     "multi-model"
