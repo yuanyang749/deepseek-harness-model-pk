@@ -2,6 +2,9 @@ name: release-artifacts
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*.*.*'
 
 permissions:
   contents: read
@@ -44,3 +47,56 @@ jobs:
           path: dist/packages/*.tgz
           if-no-files-found: error
           retention-days: 7
+
+  publish:
+    needs: native-package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.3
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/packages
+      - name: Publish native packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(dist/packages/native-*/*.tgz)
+          if [ ${#packages[@]} -eq 0 ]; then
+            echo 'no native tarballs found' >&2
+            exit 1
+          fi
+          for tarball in "${packages[@]}"; do
+            echo "publishing ${tarball}"
+            if output="$(npm publish "${tarball}" --access public 2>&1)"; then
+              printf '%s\n' "${output}"
+              continue
+            fi
+            printf '%s\n' "${output}"
+            if printf '%s' "${output}" | grep -qiE 'cannot publish over|already exists|EPUBLISHCONFLICT'; then
+              echo "already published; skipping ${tarball}"
+              continue
+            fi
+            exit 1
+          done
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if npm view "$(node -p 'require("./package.json").name')"@"$(node -p 'require("./package.json").version')" version >/dev/null 2>&1; then
+            echo "main package already published; skipping"
+          else
+            pnpm publish --access public --no-git-checks
+          fi

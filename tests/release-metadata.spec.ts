@@ -65,5 +65,8 @@ describe('release metadata', () => {
     }
     expect(workflow).toContain('actions/upload-artifact@v4')
     expect(workflow).toContain(' pack --pack-destination')
+    expect(workflow).toContain("tags:")
+    expect(workflow).toContain('npm publish')
+    expect(workflow).toContain('pnpm publish --access public --no-git-checks')
   })
 })
