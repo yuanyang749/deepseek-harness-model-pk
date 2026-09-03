@@ -1,7 +1,7 @@
 #[cfg(unix)]
 include!("unix.rs");
 
-// Rebuild helper for 0.1.2
+// Rebuild helper for 0.1.3
 
 #[cfg(windows)]
 include!("windows.rs");

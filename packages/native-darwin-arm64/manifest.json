@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "target": "aarch64-apple-darwin",
-  "version": "0.1.2",
-  "sha256": "edb913a235f6fab2970e901dd12172e7535af65df3778e277639905b6e9f0556"
+  "version": "0.1.3",
+  "sha256": "37dd89ed89e7a03d8b7e0c8f8774c21fc741fcd5b245a2e19c4af7924a79a2f3"
 }

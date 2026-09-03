@@ -17,7 +17,7 @@ async function json(path: string): Promise<Record<string, unknown>> {
 describe('release metadata', () => {
   it('ships the public project documents and npm metadata', async () => {
     await expect(readFile('LICENSE', 'utf8')).resolves.toContain('MIT License')
-    await expect(readFile('CHANGELOG.md', 'utf8')).resolves.toContain('0.1.2')
+    await expect(readFile('CHANGELOG.md', 'utf8')).resolves.toContain('0.1.3')
     await expect(readFile('SECURITY.md', 'utf8')).resolves.toContain('Security')
     await expect(readFile('CONTRIBUTING.md', 'utf8')).resolves.toContain('Contributing')
     expect(JSON.parse(await readFile('screenshots.json', 'utf8'))).toEqual([
@@ -30,7 +30,7 @@ describe('release metadata', () => {
     const root = await json('package.json')
     expect(root).toMatchObject({
       name: '@yuanyang749/dsh-model-pk',
-      version: '0.1.2',
+      version: '0.1.3',
       license: 'MIT',
       author: 'yuanyang749',
       repository: { type: 'git', url: repository },

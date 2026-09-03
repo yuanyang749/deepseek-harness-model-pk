@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.1.3 - 2026-09-03
+
+- Accept compatible DSH runtimes without requiring an exact package version or source commit.
+- Record the actual DSH runtime in diagnostics, Harness fingerprints, experiment archives, and the UI while retaining capability-based execution checks.
+
 ## 0.1.2 - 2026-09-01
 
 - Fix Cordis patch plugin bundle name registration to match package scope `@yuanyang749/dsh-model-pk`.

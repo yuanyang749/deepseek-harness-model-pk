@@ -1,6 +1,6 @@
 {
   "name": "@yuanyang749/dsh-model-pk",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "PK 2-10 models on the same prompt, files, and tools in DeepSeek Harness.",
   "license": "MIT",
   "author": "yuanyang749",

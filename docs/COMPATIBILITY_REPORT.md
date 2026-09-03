@@ -6,7 +6,7 @@
 |---|---|
 | DSH runtime | No exact package-version or source-commit lock |
 | Validated build baseline | `0.1.1-rc.2` / `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e` |
-| Plugin | `@yuanyang749/dsh-model-pk@0.1.1` |
+| Plugin | `@yuanyang749/dsh-model-pk@0.1.3` |
 | Node | `^22.19 || >=24` |
 | Host OS | macOS arm64 / x64; Windows arm64 / x64 |
 
