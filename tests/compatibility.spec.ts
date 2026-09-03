@@ -2,9 +2,9 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { DSH_COMMIT, DSH_VERSION } from '../src/contracts/constants.js'
+import { DSH_BUILD_COMMIT, DSH_BUILD_VERSION } from '../src/contracts/constants.js'
 import { dataLayoutAtRoot } from '../src/host/archive.js'
-import { CompatibilityGate } from '../src/host/compatibility.js'
+import { CompatibilityGate, dshRuntimeIdentityCheck } from '../src/host/compatibility.js'
 import { NativeHelper, nativeExecutableName } from '../src/native/helper.js'
 import { SandboxRunner } from '../src/native/sandbox.js'
 
@@ -19,13 +19,25 @@ afterAll(async () => {
 })
 
 describe('compatibility gate', () => {
+  it('does not block a different or unreported DSH version', () => {
+    expect(dshRuntimeIdentityCheck({ dshVersion: '9.9.9', dshCommit: 'different' })).toMatchObject({
+      id: 'dsh-runtime',
+      status: 'PASS',
+      diagnostics: { version: '9.9.9', commit: 'different' },
+    })
+    expect(dshRuntimeIdentityCheck({ dshVersion: null, dshCommit: null })).toMatchObject({
+      status: 'PASS',
+      diagnostics: { version: 'unknown', commit: 'unknown' },
+    })
+  })
+
   it.runIf(process.platform === 'darwin' || process.platform === 'win32')('accepts an isolated workspace with outbound network access', async () => {
     const helper = await NativeHelper.locate({
       explicitPath: resolve('native', 'model-pk-helper', 'target', 'debug', nativeExecutableName(process.platform)),
       allowDevBinary: true,
     })
     const gate = new CompatibilityGate(
-      { dshVersion: DSH_VERSION, dshCommit: DSH_COMMIT },
+      { dshVersion: DSH_BUILD_VERSION, dshCommit: DSH_BUILD_COMMIT },
       dataLayoutAtRoot(root),
       helper,
       new SandboxRunner(helper),

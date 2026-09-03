@@ -1,11 +1,11 @@
 # Model PK V1 Compatibility Report
 
-## Locked target
+## Runtime policy
 
 | Contract | Value |
 |---|---|
-| DSH package | `0.1.1-rc.2` |
-| DSH commit | `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e` |
+| DSH runtime | No exact package-version or source-commit lock |
+| Validated build baseline | `0.1.1-rc.2` / `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e` |
 | Plugin | `@yuanyang749/dsh-model-pk@0.1.1` |
 | Node | `^22.19 || >=24` |
 | Host OS | macOS arm64 / x64; Windows arm64 / x64 |
@@ -14,7 +14,7 @@
 
 | Probe | Evidence / behavior |
 |---|---|
-| DSH identity | Installed package version plus profile-supplied source commit must match exactly. |
+| DSH identity | Installed package version and optional source commit are recorded for diagnostics; a mismatch does not block execution by itself. |
 | Host/Client bundle | Independent Host ESM and browser CJS bundle; additive settings.section slot. |
 | RPC trust fence | `/model-pk` and `/model-pk-native` are separately registered with `authority: loopback`. |
 | Model identity | Versioned JCS `modelConfigId`, redacted Provider profile snapshot, Adapter/serializer versions, retry policy, revision, context window and independently resolved output-token capability. The pinned pi-ai catalog supplies exact built-in protocol/capability facts; custom routes use their redacted profile. |
@@ -52,12 +52,12 @@ in the sealed workspace instead of being denied or virtualized.
 - pi-ai routes without an observable supported protocol remain BLOCKED.
 - Image experiments remain BLOCKED unless the selected models, DSH attachment limits, normalized-reference readback and version-pinned deterministic request projection all pass.
 
-## Verified upgrade evidence
+## Validated build evidence
 
-The DSH `0.1.1-rc.2` upgrade is covered by strict TypeScript checking, the
+The DSH `0.1.1-rc.2` build baseline is covered by strict TypeScript checking, the
 version-pinned pi-ai request-image fixtures, normalized attachment-reference
 tests, DeepSeek native vision capability tests, all Vitest suites, and both
 Host/Client production builds. Artifacts for other OS/CPU combinations are
 built and tested on their matching release runner rather than inferred from a
-different platform; every installed host must still pass the runtime
-Compatibility Gate before Start is enabled.
+different platform. Other installed DSH versions are accepted when that host
+passes the runtime Compatibility Gate before Start is enabled.

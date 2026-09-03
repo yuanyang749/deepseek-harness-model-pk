@@ -52,7 +52,7 @@ export function ModelPkOverlay({ controller }: { controller: ModelPkUiController
         onClose={() => controller.close()}
         hasExperiment={snapshot.experiment !== null}
         ready={snapshot.capability?.executionEnabled ?? false}
-        envDetail={`DSH ${snapshot.capability?.expectedDshVersion ?? '—'} · ${snapshot.capability?.hostPlatform ?? '—'}/${snapshot.capability?.hostArch ?? '—'}`}
+        envDetail={`DSH ${snapshot.capability?.dshVersion ?? '—'} · ${snapshot.capability?.hostPlatform ?? '—'}/${snapshot.capability?.hostArch ?? '—'}`}
       />
       {snapshot.error === null ? null : <ErrorBanner snapshot={snapshot} onClose={() => controller.clearError()} />}
       <main className="mpk-content">

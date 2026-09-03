@@ -1,5 +1,5 @@
 import { builtinModels } from '@earendil-works/pi-ai/providers/all'
-import { DSH_VERSION, LIMITS } from '../contracts/constants.js'
+import { DSH_BUILD_VERSION, LIMITS } from '../contracts/constants.js'
 import type { Hash, ModelConfigSnapshot, ModelListItem } from '../contracts/types.js'
 import { fail } from '../core/error.js'
 import { hashCanonical } from '../core/jcs.js'
@@ -130,7 +130,7 @@ export class ModelCatalog {
       modelId: item.modelId,
       modelName: resolved.name,
       adapterPackage: adapter.packageName,
-      adapterVersion: DSH_VERSION,
+      adapterVersion: DSH_BUILD_VERSION,
       protocol,
       revision: 'unresolved',
       inputModalities: this.resolveModalities(adapter.kind, route, item.modelId, resolved.name, resolved.inputModalities).modalities,

@@ -2,7 +2,7 @@ import { createServer } from 'node:net'
 import { link, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DSH_COMMIT, DSH_VERSION, LIMITS, PLUGIN_VERSION } from '../contracts/constants.js'
+import { DSH_BUILD_COMMIT, DSH_BUILD_VERSION, LIMITS, PLUGIN_VERSION } from '../contracts/constants.js'
 import type { CapabilityReport, ModelPkError } from '../contracts/types.js'
 import { modelPkError, normalizeError } from '../core/error.js'
 import type { NativeHelper } from '../native/helper.js'
@@ -19,19 +19,37 @@ export interface HostRuntimeIdentity {
   readonly dshCommit: string | null
 }
 
+export interface CompatibilityCheck {
+  readonly id: string
+  readonly status: 'PASS' | 'BLOCKED'
+  readonly summary: string
+  readonly diagnostics?: Readonly<Record<string, unknown>>
+}
+
 export interface CompatibilityEvidence {
   readonly report: CapabilityReport
-  readonly checks: readonly {
-    readonly id: string
-    readonly status: 'PASS' | 'BLOCKED'
-    readonly summary: string
-    readonly diagnostics?: Readonly<Record<string, unknown>>
-  }[]
+  readonly checks: readonly CompatibilityCheck[]
 }
 
 export interface CompatibilityProbes {
   readonly modelSnapshot?: () => Promise<void>
   readonly sessionFreshness?: () => Promise<void>
+}
+
+export function dshRuntimeIdentityCheck(identity: HostRuntimeIdentity): CompatibilityCheck {
+  const version = identity.dshVersion ?? 'unknown'
+  const commit = identity.dshCommit ?? 'unknown'
+  return {
+    id: 'dsh-runtime',
+    status: 'PASS',
+    summary: `DSH ${version}；兼容性由运行时能力探针判定`,
+    diagnostics: {
+      version,
+      commit,
+      validatedBuildVersion: DSH_BUILD_VERSION,
+      validatedBuildCommit: DSH_BUILD_COMMIT,
+    },
+  }
 }
 
 export class CompatibilityGate {
@@ -60,18 +78,7 @@ export class CompatibilityGate {
         checks.push({ id, status: 'BLOCKED', summary: blocker.userMessage, diagnostics: { code: blocker.code, technicalMessage: blocker.technicalMessage } })
       }
     }
-    if (this.identity.dshVersion !== DSH_VERSION || this.identity.dshCommit !== DSH_COMMIT) {
-      const error = modelPkError(
-        'DSH_VERSION_UNSUPPORTED',
-        'compatibility:dsh-version',
-        'DSH 版本与 Model PK V1 锁定版本不一致',
-        `expected ${DSH_VERSION}/${DSH_COMMIT}; got ${this.identity.dshVersion ?? 'unknown'}/${this.identity.dshCommit ?? 'unknown'}`,
-      )
-      blockers.push(error)
-      checks.push({ id: 'dsh-version', status: 'BLOCKED', summary: error.userMessage, diagnostics: { expectedVersion: DSH_VERSION, expectedCommit: DSH_COMMIT } })
-    } else {
-      checks.push({ id: 'dsh-version', status: 'PASS', summary: `DSH ${DSH_VERSION} (${DSH_COMMIT.slice(0, 12)})` })
-    }
+    checks.push(dshRuntimeIdentityCheck(this.identity))
     await check('native-helper', '原生 helper 版本、架构与 hash 已验证', async () => {
       if (this.helper.probe.version.version !== PLUGIN_VERSION || this.helper.probe.version.protocolVersion !== 1) throw new Error('native helper protocol mismatch')
     })
@@ -104,8 +111,8 @@ export class CompatibilityGate {
     }
     const report: CapabilityReport = {
       pluginVersion: PLUGIN_VERSION,
-      expectedDshVersion: DSH_VERSION,
-      expectedDshCommit: DSH_COMMIT,
+      dshVersion: this.identity.dshVersion,
+      dshCommit: this.identity.dshCommit,
       hostPlatform: process.platform,
       hostArch: process.arch,
       dataRoot: this.layout.root,

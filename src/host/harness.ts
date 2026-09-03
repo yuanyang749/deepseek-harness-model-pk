@@ -1,7 +1,8 @@
-import { DSH_COMMIT, DSH_VERSION, HARNESS_PRESET, LIMITS, PLUGIN_VERSION } from '../contracts/constants.js'
+import { HARNESS_PRESET, LIMITS, PLUGIN_VERSION } from '../contracts/constants.js'
 import type { ResolvedHarness } from '../contracts/types.js'
 import { hashCanonical } from '../core/jcs.js'
 import type { SandboxRunner } from '../native/sandbox.js'
+import type { HostRuntimeIdentity } from './compatibility.js'
 
 export const MODEL_PK_SYSTEM_PROMPT = `You are running one frozen Model PK coding attempt.
 
@@ -50,7 +51,7 @@ export const TOOL_CONTRACTS = Object.freeze([
   },
 ] as const)
 
-export function resolveHarness(sandbox: SandboxRunner): ResolvedHarness {
+export function resolveHarness(sandbox: SandboxRunner, identity: HostRuntimeIdentity): ResolvedHarness {
   const orderedTools = [...TOOL_CONTRACTS].sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
   const base = {
     schemaVersion: 'model-pk/harness/v1' as const,
@@ -93,9 +94,9 @@ export function resolveHarness(sandbox: SandboxRunner): ResolvedHarness {
     },
     versions: {
       plugin: PLUGIN_VERSION,
-      dsh: DSH_VERSION,
-      dshCommit: DSH_COMMIT,
-      agentLoop: DSH_VERSION,
+      dsh: identity.dshVersion ?? 'unknown',
+      dshCommit: identity.dshCommit ?? 'unknown',
+      agentLoop: identity.dshVersion ?? 'unknown',
       sandboxContract: sandbox.contractVersion(),
       toolContract: 'model-pk-tools-v1',
     },

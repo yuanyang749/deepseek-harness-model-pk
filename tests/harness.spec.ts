@@ -6,7 +6,7 @@ import { SandboxRunner } from '../src/native/sandbox.js'
 describe('Model PK workspace capability policy', () => {
   it('allows outbound network while keeping the attempt workspace boundary', () => {
     const sandbox = new SandboxRunner(NativeHelper.unavailable())
-    const harness = resolveHarness(sandbox)
+    const harness = resolveHarness(sandbox, { dshVersion: '0.1.1-rc.2', dshCommit: 'fixture' })
 
     expect(harness.permissions).toMatchObject({
       filesystem: 'attempt-root-only',

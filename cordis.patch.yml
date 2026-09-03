@@ -25,5 +25,3 @@
 - insert:
     - id: model-pk
       name: '@yuanyang749/dsh-model-pk'
-      config:
-        dshCommit: b150a551b8d465e31e418e1b2eaf5e79bbb7d28e

@@ -118,8 +118,8 @@ export function fixtureDraft(): Draft {
 export function fixtureCapability(): CapabilityReport {
   return {
     pluginVersion: '0.1.0',
-    expectedDshVersion: '0.1.1-rc.2',
-    expectedDshCommit: 'b150a551b8d465e31e418e1b2eaf5e79bbb7d28e',
+    dshVersion: '0.1.1-rc.2',
+    dshCommit: 'b150a551b8d465e31e418e1b2eaf5e79bbb7d28e',
     hostPlatform: 'darwin',
     hostArch: 'arm64',
     dataRoot: '/fixture/model-pk/v1',

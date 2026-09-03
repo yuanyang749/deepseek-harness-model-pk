@@ -29,7 +29,6 @@ export type ActionState = 'PENDING' | 'APPLIED' | 'FAILED'
 
 export type ModelPkErrorCode =
   | 'DSH_UNREACHABLE'
-  | 'DSH_VERSION_UNSUPPORTED'
   | 'MODEL_CONFIG_NOT_FOUND'
   | 'MODEL_CONFIG_DRIFT'
   | 'HARNESS_PROFILE_DRIFT'
@@ -460,8 +459,8 @@ export interface StorageListItem {
 
 export interface CapabilityReport {
   readonly pluginVersion: string
-  readonly expectedDshVersion: string
-  readonly expectedDshCommit: string
+  readonly dshVersion: string | null
+  readonly dshCommit: string | null
   readonly hostPlatform: string
   readonly hostArch: string
   readonly dataRoot: string

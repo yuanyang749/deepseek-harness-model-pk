@@ -1,4 +1,4 @@
-import { DSH_VERSION, LIMITS, PLUGIN_VERSION } from '../contracts/constants.js'
+import { LIMITS, PLUGIN_VERSION } from '../contracts/constants.js'
 import type {
   Attempt,
   AttemptTrigger,
@@ -77,7 +77,7 @@ export function createExperimentDefinition(input: CreateExperimentDefinitionInpu
     executionConditionsHash: input.preflight.executionConditionsHash,
     selectedModels: input.preflight.models,
     preflightSnapshotHash: input.preflight.snapshotHash,
-    dshVersion: DSH_VERSION,
+    dshVersion: input.preflight.resolvedHarness.versions.dsh ?? 'unknown',
     pluginVersion: PLUGIN_VERSION,
     experimentPath: input.experimentPath,
     resultPath: input.resultPath ?? null,

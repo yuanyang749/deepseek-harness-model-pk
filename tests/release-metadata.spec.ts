@@ -40,6 +40,8 @@ describe('release metadata', () => {
     })
     expect(root.keywords).toEqual(expect.arrayContaining(['deepseek-harness', 'dsh-plugin', 'model-pk', 'model-comparison']))
     expect(root.description).toContain('PK 2-10 models')
+    expect(root.peerDependencies).toMatchObject({ '@deepseek-ai/dsh': '>=0.1.0-0' })
+    expect(root.devDependencies).toMatchObject({ '@deepseek-ai/dsh': '0.1.1-rc.2' })
   })
 
   it('publishes four platform packages from the yuanyang749 scope', async () => {

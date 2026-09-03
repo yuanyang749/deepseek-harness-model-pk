@@ -26,10 +26,9 @@ if (!skipBuild) {
   runNodeCli(pnpmEntry, ['build'])
 }
 const version = runNodeCli(dshEntry, ['--version'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim()
-if (version !== '0.1.1-rc.2') throw new Error(`Model PK requires DSH 0.1.1-rc.2, found ${version}`)
 runNodeCli(dshEntry, ['plugin', '--profile', profile, 'add', root])
 
 console.log('')
-console.log(`Installed dsh-model-pk into DSH profile ${profile}.`)
+console.log(`Installed dsh-model-pk into DSH ${version} profile ${profile}.`)
 console.log(`Verify: dsh --profile ${profile} --dump-config`)
 console.log(`Launch: dsh --profile ${profile}`)

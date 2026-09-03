@@ -907,7 +907,6 @@ technicalMessage 必须脱敏。UI 默认展示 userMessage、code 和是否可�
 | 错误码 | 默认可重试 | 含义 |
 |---|---:|---|
 | DSH_UNREACHABLE | 是 | 无法连接 DSH 宿主能力 |
-| DSH_VERSION_UNSUPPORTED | 否 | DSH 版本不在插件兼容范围 |
 | MODEL_CONFIG_NOT_FOUND | 否 | 冻结或选中的配置不存在 |
 | MODEL_CONFIG_DRIFT | 否 | 配置已变化，无法保证原条件 |
 | HARNESS_PROFILE_DRIFT | 否 | Agent Loop、系统提示词、工具或权限已漂移 |

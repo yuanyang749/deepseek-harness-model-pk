@@ -2,7 +2,7 @@
 
 Model PK 用来在 DeepSeek Harness 里做模型同题 PK：选 2 到 10 个已配置模型，只准备一次题目、图片和起始文件，各模型按同一套规则分开跑。过程可以同屏看，某一路挂了能单独重跑，结果互不覆盖。
 
-当前锁定 DSH `0.1.1-rc.2`。V1 不做自动打分、自动排名或跨实验排行榜；谁更好由你自己看完再排。
+插件不锁定 DSH 运行版本；安装后通过模型快照、会话新鲜度、沙箱隔离和原生 helper 等运行时能力探针判定是否可执行。V1 不做自动打分、自动排名或跨实验排行榜；谁更好由你自己看完再排。
 
 ## V1 功能
 
@@ -20,17 +20,17 @@ Model PK 用来在 DeepSeek Harness 里做模型同题 PK：选 2 到 10 个已�
 
 V1 不包含自动评分、自动质量排名、Judge、Elo、跨实验排行榜、批量 Benchmark 或外部 Agent CLI。实验报告中的质量顺序完全由用户人工评定，仅保存在本机，不会自动选择“最佳模型”或改变实验结果。
 
-## 固定版本
+## 兼容策略
 
-- DSH: `0.1.1-rc.2`
-- DSH source commit: `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`
+- DSH 运行时：不限定精确版本或 source commit
+- DSH 构建/测试基线：`0.1.1-rc.2` / `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`
 - Node: `^22.19 || >=24`
 - macOS: arm64 / x64 原生可选包
 - Windows: arm64 / x64 原生可选包
 
 Windows 的运行数据根目录需位于支持 ACL 的本地卷；启动时的 Compatibility Gate 会实际验证 AppContainer 的 workspace 读写、出站联网、越界拒绝与孤儿进程清理，而不是仅按系统版本放行。
 
-版本、Adapter、图片 wire path、session 新鲜度、隔离、归档和控制容量均由启动时 Compatibility Gate 动态证明；阻断项会保留 UI 查询能力并关闭 Start。
+Adapter、图片 wire path、session 新鲜度、隔离、归档和控制容量均由启动时 Compatibility Gate 动态证明；DSH 版本和 commit 仅记录为诊断信息，不单独阻断 Start。
 
 pi-ai 内置模型的 wire protocol、上下文与输出 token 能力来自锁定的 `@earendil-works/pi-ai@0.82.1` catalog；自定义 route 从脱敏 profile 解析。Preflight 诊断会展示这些能力、Serializer 依赖与最终 fingerprint，公共输出能力低于 8192 时直接阻断。
 

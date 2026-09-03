@@ -140,7 +140,11 @@ export class PreflightService {
         dshLimits: limits,
       }
     })
-    const harness = resolveHarness(this.sandbox)
+    const capability = this.compatibility().report
+    const harness = resolveHarness(this.sandbox, {
+      dshVersion: capability.dshVersion,
+      dshCommit: capability.dshCommit,
+    })
     await addCheck('harness', '固定 Harness', async () => {
       if (harness.toolNames.join('\0') !== 'bash\0edit\0glob\0grep\0read\0write') throw new Error('tool contract drift')
       return { fingerprint: harness.fingerprint, preset: harness.preset }

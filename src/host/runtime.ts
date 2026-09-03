@@ -191,7 +191,7 @@ async function writeCompatibilityReport(
     '# Model PK Compatibility Report',
     '',
     `- Generated: ${new Date().toISOString()}`,
-    `- DSH contract: ${report.expectedDshVersion} / ${report.expectedDshCommit}`,
+    `- DSH runtime: ${report.dshVersion ?? 'unknown'} / ${report.dshCommit ?? 'unknown'}`,
     `- Host: ${report.hostPlatform}/${report.hostArch}`,
     `- Execution: ${report.executionEnabled ? 'READY' : 'BLOCKED'}`,
     '',
